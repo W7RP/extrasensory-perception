@@ -6,7 +6,8 @@
 //        /sim/ground_truth             the device's own pose (see below), and,
 //                                      for evaluation only, the true entity
 //   out  ~/image                       the annotated image
-//        ~/truth                       coop_msgs/OverlayTruth per frame (evaluation only)
+//        ~/truth                       coop_msgs/OverlayTruth per entity per frame
+//                                      (evaluation only)
 //        optional MP4 (`video_path`) and PNG stills every `snapshot_every_s`
 //        of simulation time (`snapshot_dir`)
 //
@@ -135,7 +136,8 @@ public:
     const auto info_topic = declare_parameter<std::string>("info_topic", "/device/camera/camera_info");
     const auto tracks_topic = declare_parameter<std::string>("tracks_topic", "/device/tracks");
     device_frame_ = declare_parameter<std::string>("device_frame", "device");
-    entity_frame_ = declare_parameter<std::string>("entity_frame", "entity");
+    entity_frames_ = declare_parameter<std::vector<std::string>>("entity_frames", {"entity"});
+    entity_hist_.resize(entity_frames_.size());
     const auto mount = declare_parameter<std::vector<double>>("camera_mount_xyz", {0.0, 0.0, 1.6});
     mount_ = Vec3(mount.at(0), mount.at(1), mount.at(2));
     const auto size = declare_parameter<std::vector<double>>("entity_size_m", {0.5, 0.5, 1.75});
@@ -147,6 +149,7 @@ public:
     video_path_ = declare_parameter<std::string>("video_path", "");
     video_fps_ = declare_parameter<double>("video_fps", 15.0);
     link_label_ = declare_parameter<std::string>("link_label", "perfect link");
+    draw_hud_ = declare_parameter<bool>("draw_hud", true);  // off when the game view draws its own
     snapshot_dir_ = declare_parameter<std::string>("snapshot_dir", "");
     snapshot_every_s_ = declare_parameter<double>("snapshot_every_s", 2.0);
 
@@ -154,9 +157,9 @@ public:
     if (world_file.empty()) {
       throw std::invalid_argument("world_file is required (occluders: what hides the entity from the device)");
     }
-    occluders_ = synthetic_detector::load_box_occluders(world_file,
+    occluders_ = synthetic_detector::load_occluders(world_file,
         declare_parameter<std::vector<std::string>>("model_paths", std::vector<std::string>{}),
-        declare_parameter<std::vector<std::string>>("exclude_models", {"entity"})).boxes;
+        declare_parameter<std::vector<std::string>>("exclude_models", {"entity"}));
 
     info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(info_topic, rclcpp::SensorDataQoS(),
         [this](const sensor_msgs::msg::CameraInfo & m) {on_info(m);});
@@ -194,8 +197,12 @@ private:
   void on_ground_truth(const tf2_msgs::msg::TFMessage & m)
   {
     for (const auto & tf : m.transforms) {
-      std::deque<Stamped> * hist = tf.child_frame_id == device_frame_ ? &device_hist_ :
-        tf.child_frame_id == entity_frame_ ? &entity_hist_ : nullptr;
+      std::deque<Stamped> * hist = tf.child_frame_id == device_frame_ ? &device_hist_ : nullptr;
+      for (std::size_t i = 0; hist == nullptr && i < entity_frames_.size(); ++i) {
+        if (tf.child_frame_id == entity_frames_[i]) {
+          hist = &entity_hist_[i];
+        }
+      }
       if (hist == nullptr) {
         continue;
       }
@@ -239,22 +246,34 @@ private:
     cv::Mat fill = img.clone();  // translucent fills go here, blended once at the end
     bool any_fill = false;
 
-    // True entity box, for the evaluation message and the ghost outline.
-    const auto truth = nearest(entity_hist_, t);
-    std::optional<ProjectedBox> true_box;
-    bool truth_hidden = false;
-    if (truth) {
-      true_box = project_box(cam_, pose, box_corners(truth->p, yaw_of(truth->q), size_));
-      const Vec3 ref = truth->p + Vec3(0.0, 0.0, ref_height_);
-      truth_hidden = synthetic_detector::first_occluder(pose.p, ref, occluders_).has_value();
+    // True entity boxes, for the evaluation messages and the ghost outlines.
+    struct Truth
+    {
+      std::optional<Stamped> pose;
+      std::optional<ProjectedBox> box;
+      bool hidden{false};
+      bool in_frustum{false};
+    };
+    std::vector<Truth> truths(entity_frames_.size());
+    for (std::size_t i = 0; i < entity_frames_.size(); ++i) {
+      Truth & tr = truths[i];
+      tr.pose = nearest(entity_hist_[i], t);
+      if (tr.pose) {
+        tr.box = project_box(cam_, pose, box_corners(tr.pose->p, yaw_of(tr.pose->q), size_));
+        tr.hidden = synthetic_detector::occluded(pose.p,
+            tr.pose->p + Vec3(0.0, 0.0, ref_height_), occluders_);
+        tr.in_frustum = tr.box && clip(tr.box->bounds, cam_).has_value();
+      }
     }
-
-    coop_msgs::msg::OverlayTruth ot;
-    ot.stamp = msg->header.stamp;
-    ot.entity = entity_frame_;
-    ot.in_frustum = true_box && clip(true_box->bounds, cam_).has_value();
-    ot.hidden = truth_hidden;
-    double best_match = match_radius_;
+    struct Drawn
+    {
+      std::uint32_t id;
+      Vec3 ref;
+      Rect bounds;
+      int agents;
+      double age;
+    };
+    std::vector<Drawn> drawn;
 
     int drawn_tracks = 0;
     if (tracks_) {
@@ -267,7 +286,7 @@ private:
         const Vec3 ref = Vec3(tr.position[0], tr.position[1], tr.position[2]) + dt * v;
         const Vec3 ground(ref.x(), ref.y(), ref.z() - ref_height_);
         const double age = t - seconds(tr.last_update);
-        const bool hidden = synthetic_detector::first_occluder(pose.p, ref, occluders_).has_value();
+        const bool hidden = synthetic_detector::occluded(pose.p, ref, occluders_);
         const int agents = std::popcount(static_cast<unsigned>(tr.source_mask));
         const Presence pr = presence(hidden, agents);
 
@@ -345,36 +364,49 @@ private:
           {static_cast<int>(box->bounds.x0), static_cast<int>(box->bounds.y0) - 6}, color);
         ++drawn_tracks;
 
-        // Evaluation: is this the track on the entity?
-        if (truth) {
-          const double d = std::hypot(ref.x() - truth->p.x(), ref.y() - truth->p.y());
-          if (d <= best_match) {
-            best_match = d;
-            ot.drawn = true;
-            ot.track_id = tr.id;
-            ot.agents_seeing = static_cast<std::uint8_t>(agents);
-            ot.age_s = static_cast<float>(age);
-            ot.world_error_m = static_cast<float>(d);
-            if (true_box) {
-              ot.pixel_error = static_cast<float>(
-                (box->bounds.center() - true_box->bounds.center()).norm());
-              ot.iou = static_cast<float>(iou(box->bounds, true_box->bounds));
-            }
-          }
-        }
+        drawn.push_back({tr.id, ref, box->bounds, agents, age});
       }
     }
     if (any_fill) {
       cv::addWeighted(fill, 0.35, img, 0.65, 0.0, img);
     }
-    if (draw_truth_ && true_box && ot.in_frustum) {
-      for (const auto & e : kBoxEdges) {
-        dashed_line(img, true_box->corners[static_cast<std::size_t>(e[0])],
-          true_box->corners[static_cast<std::size_t>(e[1])], kTruthColor, 1);
+    // Evaluation: for each entity, the nearest drawn track within the match radius.
+    for (std::size_t i = 0; i < truths.size(); ++i) {
+      const Truth & tr = truths[i];
+      coop_msgs::msg::OverlayTruth ot;
+      ot.stamp = msg->header.stamp;
+      ot.entity = entity_frames_[i];
+      ot.in_frustum = tr.in_frustum;
+      ot.hidden = tr.hidden;
+      if (tr.pose) {
+        double best = match_radius_;
+        for (const Drawn & d : drawn) {
+          const double dist = std::hypot(d.ref.x() - tr.pose->p.x(), d.ref.y() - tr.pose->p.y());
+          if (dist <= best) {
+            best = dist;
+            ot.drawn = true;
+            ot.track_id = d.id;
+            ot.agents_seeing = static_cast<std::uint8_t>(d.agents);
+            ot.age_s = static_cast<float>(d.age);
+            ot.world_error_m = static_cast<float>(dist);
+            if (tr.box) {
+              ot.pixel_error = static_cast<float>((d.bounds.center() - tr.box->bounds.center()).norm());
+              ot.iou = static_cast<float>(iou(d.bounds, tr.box->bounds));
+            }
+          }
+        }
+      }
+      truth_pub_->publish(ot);
+      if (draw_truth_ && tr.box && tr.in_frustum) {
+        for (const auto & e : kBoxEdges) {
+          dashed_line(img, tr.box->corners[static_cast<std::size_t>(e[0])],
+            tr.box->corners[static_cast<std::size_t>(e[1])], kTruthColor, 1);
+        }
       }
     }
-    draw_hud(img, t, drawn_tracks);
-    truth_pub_->publish(ot);
+    if (draw_hud_) {
+      draw_hud(img, t, drawn_tracks);
+    }
     image_pub_->publish(*cv->toImageMsg());
     write_video(img);
     write_snapshot(img, t);
@@ -430,7 +462,7 @@ private:
 
   // Configuration
   std::string device_frame_;
-  std::string entity_frame_;
+  std::vector<std::string> entity_frames_;
   Vec3 mount_{Vec3::Zero()};
   Vec3 size_{Vec3::Zero()};
   double ref_height_{0.9};
@@ -440,17 +472,18 @@ private:
   std::string video_path_;
   double video_fps_{15.0};
   std::string link_label_;
+  bool draw_hud_{true};
   std::string snapshot_dir_;
   double snapshot_every_s_{2.0};
   double next_snapshot_t_{0.0};
-  std::vector<synthetic_detector::Obb> occluders_;
+  synthetic_detector::Occluders occluders_;
 
   // State (single-threaded executor)
   PinholeCamera cam_;
   bool have_info_{false};
   coop_msgs::msg::TrackArray::ConstSharedPtr tracks_;
   std::deque<Stamped> device_hist_;
-  std::deque<Stamped> entity_hist_;
+  std::vector<std::deque<Stamped>> entity_hist_;
   std::map<std::uint32_t, double> last_yaw_;
   cv::VideoWriter video_;
 
