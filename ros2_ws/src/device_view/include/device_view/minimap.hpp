@@ -11,6 +11,9 @@
 // field of view, range and a clear line of sight to the cell at person height.
 #pragma once
 
+#include <array>
+#include <optional>
+
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -36,6 +39,7 @@ struct MapTrack
   std::uint32_t id{0};
   int agents_seeing{0};
   bool coasting{false};
+  bool zoomed{false};   // the zoom camera is looking at it
 };
 
 struct MinimapConfig
@@ -61,6 +65,12 @@ enum class CellView : std::uint8_t
   const synthetic_detector::Occluders & occ);
 
 // Draw the whole minimap into a size x size image.
+// A camera's field of view on the ground (z = 0): its four corner rays, when
+// all of them meet the ground within its range (a camera looking steeply
+// down, like a high agent's); nullopt otherwise (the minimap draws a wedge).
+// Order: top left, top right, bottom right, bottom left as seen in the image.
+[[nodiscard]] std::optional<std::array<synthetic_detector::Vec3, 4>> ground_footprint(const Viewer & v);
+
 [[nodiscard]] cv::Mat draw_minimap(
   int size_px, const MinimapConfig & cfg, const synthetic_detector::Occluders & occ,
   const std::vector<CellView> & fog, const Viewer & device, std::span<const Viewer> agents,

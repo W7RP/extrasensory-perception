@@ -13,6 +13,11 @@
 //
 //   in   /device/overlay/image, /device/tracks, /device/status,
 //        /agent_<n>/status (what each agent reports about itself)
+//        with a zoom camera on agent z (`zoom_agent`, Phase 4): its video
+//        (`zoom_image_topic`) and /agent_<z>/gimbal/state, shown as a
+//        picture-in-picture with what the device can work out itself: the
+//        track it is on, slant range, ground resolution, and the Johnson
+//        level (detect / recognise / identify) for a person at that range
 //   out  /device/device_controller/cmd (geometry_msgs/Twist, 30 Hz)
 //        ~/image   the composed frame, 10 Hz (recording, and checking it without a screen)
 //        /game/quit (std_msgs/Bool, latched) when the player quits
@@ -49,6 +54,7 @@
 
 #include <coop_msgs/msg/agent_status.hpp>
 #include <coop_msgs/msg/device_status.hpp>
+#include <coop_msgs/msg/gimbal_state.hpp>
 #include <coop_msgs/msg/track_array.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <sensor_msgs/msg/image.hpp>
@@ -56,6 +62,7 @@
 
 #include "device_view/minimap.hpp"
 #include "device_view/walker.hpp"
+#include "synthetic_detector/imaging.hpp"
 #include "synthetic_detector/sdf_occluders.hpp"
 
 namespace device_view
@@ -148,6 +155,23 @@ public:
             std::lock_guard lock(mutex_);
             agents_[m.agent] = m;
           }));
+    }
+    zoom_agent_ = static_cast<int>(declare_parameter<int>("zoom_agent", 0));
+    if (zoom_agent_ > 0) {
+      zoom_sub_ = create_subscription<sensor_msgs::msg::Image>(
+        declare_parameter<std::string>("zoom_image_topic", "/agent_1/zoom/image"), 2,
+        [this](sensor_msgs::msg::Image::ConstSharedPtr m) {
+          auto cv = cv_bridge::toCvCopy(m, "bgr8");
+          std::lock_guard lock(mutex_);
+          zoom_frame_ = cv->image;
+        });
+      gimbal_sub_ = create_subscription<coop_msgs::msg::GimbalState>(
+        "/agent_" + std::to_string(zoom_agent_) + "/gimbal/state", 5,
+        [this](const coop_msgs::msg::GimbalState & m) {
+          std::lock_guard lock(mutex_);
+          gimbal_ = m;
+          have_gimbal_ = true;
+        });
     }
     cmd_pub_ = create_publisher<geometry_msgs::msg::Twist>("/device/device_controller/cmd", 10);
     image_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image", 2);
@@ -259,11 +283,17 @@ public:
       coop_msgs::msg::DeviceStatus dev;
       std::vector<coop_msgs::msg::AgentStatus> agents;
       bool have_device = false;
+      cv::Mat zoom_frame;
+      coop_msgs::msg::GimbalState gimbal;
+      bool have_gimbal = false;
       {
         std::lock_guard lock(mutex_);
         if (!frame_.empty()) {
           frame = frame_;
         }
+        zoom_frame = zoom_frame_;
+        gimbal = gimbal_;
+        have_gimbal = have_gimbal_;
         tracks = tracks_;
         dev = device_;
         have_device = have_device_;
@@ -307,7 +337,8 @@ public:
             }
             mt.push_back({t.position[0], t.position[1], t.id,
                 std::popcount(static_cast<unsigned>(t.source_mask)),
-                t.status == coop_msgs::msg::Track::STATUS_COASTING});
+                t.status == coop_msgs::msg::Track::STATUS_COASTING,
+                have_gimbal && gimbal.track_id != 0 && gimbal.track_id == t.id});
           }
         }
         const int size = std::min(width_, height_) * 3 / 8;
@@ -315,6 +346,9 @@ public:
             device, viewers, mt);
         const cv::Rect roi(width_ - size - 12, height_ - size - 12, size, size);
         cv::addWeighted(map, 0.88, view(roi), 0.12, 0.0, view(roi));
+      }
+      if (zoom_agent_ > 0) {
+        draw_zoom(view, zoom_frame, have_gimbal ? &gimbal : nullptr, tracks, agents);
       }
       // HUD: status top left, legend under it, help bottom left, fps top right.
       int held = 0;
@@ -409,6 +443,83 @@ public:
   }
 
 private:
+  // The zoom camera's picture-in-picture, top right.
+  void draw_zoom(
+    cv::Mat & view, const cv::Mat & zoom, const coop_msgs::msg::GimbalState * g,
+    const coop_msgs::msg::TrackArray::ConstSharedPtr & tracks,
+    const std::vector<coop_msgs::msg::AgentStatus> & agents) const
+  {
+    const int w = width_ * 34 / 100;
+    const int h = w * 9 / 16;
+    const cv::Rect roi(width_ - w - 12, 44, w, h);
+    if (zoom.empty()) {
+      cv::rectangle(view, roi, cv::Scalar(20, 20, 20), cv::FILLED);
+      hud_text(view, "zoom camera: no video yet", {roi.x + 10, roi.y + h / 2}, cv::Scalar(200, 200, 200), 0.5);
+    } else {
+      cv::resize(zoom, view(roi), roi.size(), 0, 0, cv::INTER_AREA);
+    }
+    const cv::Point c(roi.x + w / 2, roi.y + h / 2);
+    const cv::Scalar reticle(60, 140, 255);
+    for (const auto & [dx, dy] : std::array<std::array<int, 2>, 4>{{{1, 0}, {-1, 0}, {0, 1}, {0, -1}}}) {
+      cv::line(view, c + cv::Point(dx * 8, dy * 8), c + cv::Point(dx * 22, dy * 22), reticle, 1, cv::LINE_AA);
+    }
+    cv::rectangle(view, roi, cv::Scalar(200, 200, 200), 1);
+
+    std::string label = "ZOOM  stowed";
+    std::string detail;
+    const synthetic_detector::SensorSpec * spec = synthetic_detector::sensor_preset("eo_zoom_30x");
+    const auto agent = std::find_if(agents.begin(), agents.end(),
+        [this](const auto & a) {return a.agent == zoom_agent_;});
+    const coop_msgs::msg::Track * target = nullptr;
+    if (g && tracks && g->track_id != 0) {
+      for (const auto & t : tracks->tracks) {
+        if (t.id == g->track_id) {
+          target = &t;
+        }
+      }
+    }
+    if (target && agent != agents.end() && spec) {
+      // What the device can work out from reports alone: the agent's own
+      // position, the track's, and the camera's spec.
+      const Vec3 d(target->position[0] - agent->position[0], target->position[1] - agent->position[1],
+        target->position[2] - agent->position[2]);
+      const double range = d.norm();
+      const double depression = std::atan2(-d.z(), std::hypot(d.x(), d.y()));
+      const double gsd = range * g->hfov / spec->width_px;
+      const double px = synthetic_detector::pixels_on_target(*spec, range,
+          synthetic_detector::critical_dimension_m(0.5, 0.3, 1.75, depression));
+      static constexpr std::array<const char *, 4> kLevel{"below detection", "detect", "recognise",
+        "identify"};
+      char b[96];
+      std::snprintf(b, sizeof(b), "ZOOM  track %u  %s", target->id,
+        g->on_target ? "on target" : "slewing");
+      label = b;
+      std::snprintf(b, sizeof(b), "%.0f m   %.1f cm/px   %.0f px: %s", range, 100.0 * gsd, px,
+        kLevel[static_cast<std::size_t>(synthetic_detector::johnson_level(px))]);
+      detail = b;
+      // A person at that range, to scale, around the reticle.
+      const double scale = w / (range * g->hfov);  // view pixels per metre at the target
+      const int pw = std::max(2, static_cast<int>(std::lround(0.5 * scale)));
+      const int ph = std::max(3, static_cast<int>(std::lround(
+          (0.3 * std::sin(depression) + 1.75 * std::cos(depression)) * scale)));
+      cv::rectangle(view, {c.x - pw / 2, c.y - ph / 2}, {c.x + pw / 2, c.y + ph / 2}, reticle, 1,
+        cv::LINE_AA);
+    } else if (g && g->track_id != 0) {
+      label = "ZOOM  track " + std::to_string(g->track_id) + "  slewing";
+    }
+    hud_text(view, label, {roi.x + 8, roi.y + h - (detail.empty() ? 10 : 32)}, reticle, 0.45);
+    if (!detail.empty()) {
+      hud_text(view, detail, {roi.x + 8, roi.y + h - 10}, reticle, 0.45);
+    }
+  }
+
+  int zoom_agent_{0};
+  cv::Mat zoom_frame_;
+  coop_msgs::msg::GimbalState gimbal_;
+  bool have_gimbal_{false};
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr zoom_sub_;
+  rclcpp::Subscription<coop_msgs::msg::GimbalState>::SharedPtr gimbal_sub_;
+
   int width_{1280};
   int height_{960};
   bool window_{true};

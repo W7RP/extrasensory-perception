@@ -115,3 +115,28 @@ TEST(Fog, WallHidesTheFarSideFromTheDevice)
   EXPECT_EQ(img.rows, 300);
   EXPECT_EQ(img.cols, 300);
 }
+
+TEST(Minimap, FootprintOfAHighCamera)
+{
+  device_view::Viewer v;
+  v.body.p = synthetic_detector::Vec3(0, 0, 100);
+  v.camera.hfov_rad = 60.0 * M_PI / 180.0;
+  v.camera.vfov_rad = 36.0 * M_PI / 180.0;
+  v.camera.pitch_down_rad = 70.0 * M_PI / 180.0;
+  v.camera.max_range_m = 500.0;
+  v.camera.mount_offset_body = synthetic_detector::Vec3::Zero();
+  const auto fp = device_view::ground_footprint(v);
+  ASSERT_TRUE(fp);
+  // Far edge 52 deg down (78 m out), near edge 88 deg down (3.5 m out), facing east.
+  const double far = 100.0 / std::tan(52.0 * M_PI / 180.0);
+  const double near = 100.0 / std::tan(88.0 * M_PI / 180.0);
+  EXPECT_NEAR((*fp)[0].x(), far, 0.5);
+  EXPECT_NEAR((*fp)[2].x(), near, 0.5);
+  EXPECT_GT((*fp)[0].y(), 0.0);   // top left is to the north (left of east)
+  EXPECT_NEAR((*fp)[0].y(), -(*fp)[1].y(), 1e-9);
+  EXPECT_GT(std::abs((*fp)[0].y()), std::abs((*fp)[3].y()));  // wider far away
+  // A low, shallow camera does not get one: its top edge is above the horizon.
+  v.body.p.z() = 12.0;
+  v.camera.pitch_down_rad = 10.0 * M_PI / 180.0;
+  EXPECT_FALSE(device_view::ground_footprint(v));
+}

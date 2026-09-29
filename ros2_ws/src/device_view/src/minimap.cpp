@@ -11,6 +11,7 @@ namespace device_view
 
 namespace
 {
+using synthetic_detector::Quat;
 using synthetic_detector::Vec3;
 
 struct ToPx
@@ -30,9 +31,20 @@ double yaw_of(const synthetic_detector::Quat & q)
            1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
 }
 
-// Field-of-view wedge on the ground, out to the camera's range.
+// What a camera covers on the ground. A camera looking steeply down (its
+// whole field of view meets the ground within its range, like a high agent's)
+// covers a quadrilateral: its corner rays down to the ground. Otherwise a
+// wedge out to its range.
 void wedge(cv::Mat & img, const ToPx & to, const Viewer & v, const cv::Scalar & c)
 {
+  if (const auto fp = ground_footprint(v)) {
+    std::vector<cv::Point> quad;
+    for (const auto & p : *fp) {
+      quad.push_back(to(p.x(), p.y()));
+    }
+    cv::polylines(img, std::vector<std::vector<cv::Point>>{quad}, true, c, 1, cv::LINE_AA);
+    return;
+  }
   const double yaw = yaw_of(v.body.q);
   const double r = v.camera.max_range_m;
   const double h = 0.5 * v.camera.hfov_rad;
@@ -44,6 +56,29 @@ void wedge(cv::Mat & img, const ToPx & to, const Viewer & v, const cv::Scalar & 
   cv::polylines(img, std::vector<std::vector<cv::Point>>{pts}, true, c, 1, cv::LINE_AA);
 }
 }  // namespace
+
+std::optional<std::array<Vec3, 4>> ground_footprint(const Viewer & v)
+{
+  const Quat q = Quat(Eigen::AngleAxisd(yaw_of(v.body.q), Vec3::UnitZ())) *
+    Quat(Eigen::AngleAxisd(v.camera.pitch_down_rad, Vec3::UnitY()));
+  const Vec3 cam = v.body.p + v.body.q * v.camera.mount_offset_body;
+  const double th = std::tan(0.5 * v.camera.hfov_rad);
+  const double tv = std::tan(0.5 * v.camera.vfov_rad);
+  std::array<Vec3, 4> out;
+  std::size_t k = 0;
+  for (const auto & [sy, sz] : std::array<std::array<double, 2>, 4>{{{1, 1}, {-1, 1}, {-1, -1}, {1, -1}}}) {
+    const Vec3 ray = q * Vec3(1.0, sy * th, sz * tv);
+    if (ray.z() >= -1e-6) {
+      return std::nullopt;  // a corner above the horizon
+    }
+    const Vec3 hit = cam + (-cam.z() / ray.z()) * ray;
+    if ((hit - cam).norm() > v.camera.max_range_m) {
+      return std::nullopt;  // a corner beyond the camera's range
+    }
+    out[k++] = hit;
+  }
+  return out;
+}
 
 std::vector<CellView> fog_of_war(
   const MinimapConfig & cfg, const Viewer & device, std::span<const Viewer> agents,
@@ -132,6 +167,9 @@ cv::Mat draw_minimap(
       (t.agents_seeing > 0 ? cv::Scalar(255, 255, 0) : cv::Scalar(90, 220, 90));
     const cv::Point p = to(t.x, t.y);
     cv::circle(img, p, 5, c, t.coasting ? 1 : cv::FILLED, cv::LINE_AA);
+    if (t.zoomed) {
+      cv::circle(img, p, 10, cv::Scalar(60, 140, 255), 2, cv::LINE_AA);  // the zoom camera's target
+    }
     cv::putText(img, std::to_string(t.id), p + cv::Point(6, -4), cv::FONT_HERSHEY_SIMPLEX, 0.35,
       c, 1, cv::LINE_AA);
   }
