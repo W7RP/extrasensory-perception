@@ -1,7 +1,13 @@
-// Offboard node for one agent: take off, fly a scripted route with velocity
-// setpoints, land. The route is a waypoint list (route_nea, laps) relative to
-// the agent's start point, or a square when none is given. Copied from the
-// author's quad-autonomy-sim (quad_offboard), minus its planner-driven mode.
+// Offboard node for one agent: take off, fly with velocity setpoints, land.
+// Where it flies (`route_source`):
+//   params  a scripted waypoint list (route_nea, laps) relative to the agent's
+//           start point, or a square when none is given; lands at the end;
+//   goal    wherever the overwatch planner says: coop_msgs/AgentGoal on
+//           ~/../goal (world frame position and camera heading), re-issued
+//           every planning cycle; holds position between goals, lands when a
+//           goal says `land`.
+// Copied from the author's quad-autonomy-sim (quad_offboard); the goal mode
+// replaces its planner-path mode.
 //
 // Talks to PX4 only through the uXRCE-DDS /fmu/{in,out} topics, so the same node
 // runs unchanged against SITL or a real Pixhawk connected to a companion
@@ -25,8 +31,10 @@
 //   If PX4 leaves offboard (RC takeover, failsafe, operator mode switch) the node
 //   aborts and stops publishing setpoints; it never tries to re-engage by itself.
 
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <optional>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -41,6 +49,8 @@
 #include <px4_msgs/msg/vehicle_command.hpp>
 #include <px4_msgs/msg/vehicle_local_position.hpp>
 #include <px4_msgs/msg/vehicle_status.hpp>
+
+#include <coop_msgs/msg/agent_goal.hpp>
 
 #include "agent_offboard/px4_topics.hpp"
 #include "agent_offboard/waypoint_follower.hpp"
@@ -107,6 +117,16 @@ public:
     px4_timeout_s_ = declare_parameter<double>("px4_timeout_s", 120.0);
     engage_timeout_s_ = declare_parameter<double>("engage_timeout_s", 20.0);
     shutdown_when_done_ = declare_parameter<bool>("shutdown_when_done", true);
+    const auto route_source = declare_parameter<std::string>("route_source", "params");
+    if (route_source != "params" && route_source != "goal") {
+      throw std::invalid_argument("route_source must be 'params' or 'goal'");
+    }
+    goal_mode_ = route_source == "goal";
+    const auto origin = declare_parameter<std::vector<double>>("origin_world_enu", {0.0, 0.0, 0.0});
+    if (origin.size() != 3) {
+      throw std::invalid_argument("origin_world_enu must have 3 values");
+    }
+    origin_enu_ = {origin[0], origin[1], origin[2]};
 
     if (rate_hz < 5.0) {
       // PX4 drops out of offboard if setpoints arrive slower than 2 Hz
@@ -139,6 +159,14 @@ public:
         pos_valid_ = msg.xy_valid && msg.z_valid && msg.v_xy_valid && msg.v_z_valid;
       }, sub_opts);
 
+
+    if (goal_mode_) {
+      goal_sub_ = create_subscription<coop_msgs::msg::AgentGoal>("goal", 10,
+          [this](const coop_msgs::msg::AgentGoal & g) {
+            goal_ = g;
+            new_goal_ = true;
+          }, sub_opts);
+    }
 
     offboard_mode_pub_ = create_publisher<OffboardControlMode>(
       px4_topic<OffboardControlMode>(ns, "/fmu/in/offboard_control_mode"), 10);
@@ -179,7 +207,10 @@ private:
   bool load_route()
   {
     std::vector<Vec3> wps;
-    if (route_nea_.empty()) {
+    if (goal_mode_) {
+      // Climb in place; the planner's goals take over from there.
+      wps.push_back({pos_.x, pos_.y, pos_.z - altitude_m_});
+    } else if (route_nea_.empty()) {
       const auto square = make_square(pos_, side_m_, altitude_m_);
       wps.assign(square.begin(), square.end());
     } else {
@@ -286,10 +317,27 @@ private:
             set_phase(Phase::kAborted);
             return;
           }
+          if (goal_mode_ && goal_ && goal_->land) {
+            RCLCPP_INFO(get_logger(), "planner: land");
+            send_command(VehicleCommand::VEHICLE_CMD_NAV_LAND);
+            set_phase(Phase::kLand);
+            return;
+          }
+          if (goal_mode_ && new_goal_ && goal_ && climbed_) {
+            apply_goal(*goal_);
+          }
           const std::size_t before = follower_.active_index();
           const auto cmd = follower_.step(pos_, vel_);
           if (follower_.active_index() != before && !follower_.finished()) {
             RCLCPP_INFO(get_logger(), "waypoint %zu/%zu reached", before + 1, follower_.size());
+          }
+          if (!cmd && goal_mode_) {
+            // At the goal (or still climbing done, no goal yet): hold, facing
+            // the goal's heading, and keep streaming setpoints.
+            climbed_ = true;
+            yaw_setpoint_ = step_yaw(yaw_setpoint_, hold_yaw_, max_yaw_rate_ * control_dt_);
+            publish_velocity({0.0, 0.0, 0.0}, yaw_setpoint_);
+            return;
           }
           if (!cmd) {
             RCLCPP_INFO(get_logger(), "route complete, landing");
@@ -319,6 +367,20 @@ private:
         }
         return;
     }
+  }
+
+  // A planner goal (world ENU) as a one-waypoint route in PX4's local NED,
+  // whose origin is this agent's start point (origin_world_enu).
+  void apply_goal(const coop_msgs::msg::AgentGoal & g)
+  {
+    new_goal_ = false;
+    const Vec3 ned{g.position[1] - origin_enu_[1], g.position[0] - origin_enu_[0],
+      -(g.position[2] - origin_enu_[2])};
+    const double heading = std::remainder(M_PI / 2 - g.yaw, 2.0 * M_PI);  // ENU yaw -> NED heading
+    const std::array<Vec3, 1> wp{ned};
+    const std::array<double, 1> yaw{heading};
+    follower_.set_route(wp, yaw);
+    hold_yaw_ = heading;
   }
 
   // Timestamp for messages sent TO PX4: 0 = "stamp on arrival". The uXRCE-DDS
@@ -380,6 +442,12 @@ private:
   double engage_timeout_s_{};
   bool shutdown_when_done_{};
   bool clock_started_{false};
+  bool goal_mode_{false};
+  bool new_goal_{false};
+  bool climbed_{false};
+  std::array<double, 3> origin_enu_{};
+  std::optional<coop_msgs::msg::AgentGoal> goal_;
+  rclcpp::Subscription<coop_msgs::msg::AgentGoal>::SharedPtr goal_sub_;
 
   // Latest PX4 state (written by subscriptions, read by the timer; same
   // mutually-exclusive group, so no locking).

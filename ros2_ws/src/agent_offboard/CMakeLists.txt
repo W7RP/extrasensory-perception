@@ -16,6 +16,7 @@ add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign-con
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(px4_msgs REQUIRED)
+find_package(coop_msgs REQUIRED)
 
 # ROS-free control logic, kept as its own library so it can be unit-tested
 # without a simulator.
@@ -26,7 +27,7 @@ target_include_directories(waypoint_follower PUBLIC
 
 add_executable(offboard_agent src/offboard_agent_node.cpp)
 target_link_libraries(offboard_agent waypoint_follower)
-ament_target_dependencies(offboard_agent rclcpp px4_msgs)
+ament_target_dependencies(offboard_agent rclcpp px4_msgs coop_msgs)
 
 install(TARGETS waypoint_follower EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
