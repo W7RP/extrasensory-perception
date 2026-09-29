@@ -24,7 +24,7 @@ find_package(tf2_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
 # ROS-free core: geometry, the sensor model, and occluders from the world file.
-add_library(detector_model src/geometry.cpp src/sensor_model.cpp src/sdf_occluders.cpp)
+add_library(detector_model src/geometry.cpp src/sensor_model.cpp src/sdf_occluders.cpp src/imaging.cpp)
 target_include_directories(detector_model PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -40,13 +40,21 @@ target_link_libraries(ground_truth_bridge detector_model gz-transport13::gz-tran
   gz-msgs10::gz-msgs10)
 ament_target_dependencies(ground_truth_bridge rclcpp tf2_msgs visualization_msgs)
 
+# Simulation-only: moves the rendered zoom camera where the gimbal points.
+add_executable(gimbal_sim src/gimbal_sim.cpp)
+target_link_libraries(gimbal_sim detector_model gz-transport13::gz-transport13
+  gz-msgs10::gz-msgs10)
+ament_target_dependencies(gimbal_sim rclcpp coop_msgs tf2_msgs)
+
 install(TARGETS detector_model EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
-install(TARGETS synthetic_detector ground_truth_bridge DESTINATION lib/${PROJECT_NAME})
+install(TARGETS synthetic_detector ground_truth_bridge gimbal_sim DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_imaging test/test_imaging.cpp)
+  target_link_libraries(test_imaging detector_model)
   ament_add_gtest(test_sensor_model test/test_sensor_model.cpp)
   target_link_libraries(test_sensor_model detector_model)
   # The project world, read back by the same loader the node uses.

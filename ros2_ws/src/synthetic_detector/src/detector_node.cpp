@@ -16,6 +16,20 @@
 //        <ns>/visibility_truth   coop_msgs/VisibilityTruth per entity per
 //                                frame (evaluation only)
 //
+// Two sensor models, by `model`:
+//   range    (Phases 1-3) one body-mounted camera, visibility plus
+//            range-dependent noise (sensor_model.hpp)
+//   imaging  (Phase 4) one or more cameras from real sensor specs (imaging.hpp):
+//            body-mounted, or on a world-stabilised gimbal whose pointing
+//            arrives on <ns>/gimbal/state. Detection probability comes from
+//            pixels on target, positions from ground intersection. Each entity
+//            is reported once per frame, by the camera most likely to detect
+//            it (the one a real payload would trust).
+//
+// `nav_bias.*` adds a constant, seeded offset to the agent's navigation (its
+// absolute GPS error, which SITL's GPS does not have) and its variance to the
+// reported covariance: ~1.5 m for plain GPS, a few cm for RTK.
+//
 // The interface contract a camera detector must keep to replace this node:
 // publish one DetectionArray per processed frame on <ns>/detections, even when
 // empty, stamped with the image's capture time (simulation clock), with world
@@ -27,6 +41,7 @@
 // time. The navigation estimate is the newest one (at most ~20 ms older: the
 // ESKF publishes at 50 Hz), which is also what a live detector would have.
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -42,11 +57,13 @@
 #include <coop_msgs/msg/agent_status.hpp>
 #include <coop_msgs/msg/detection.hpp>
 #include <coop_msgs/msg/detection_array.hpp>
+#include <coop_msgs/msg/gimbal_state.hpp>
 #include <coop_msgs/msg/visibility_truth.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
 
+#include "synthetic_detector/imaging.hpp"
 #include "synthetic_detector/sdf_occluders.hpp"
 #include "synthetic_detector/sensor_model.hpp"
 
@@ -70,6 +87,15 @@ double yaw_of(const Quat & q)
   return std::atan2(2.0 * (q.w() * q.z() + q.x() * q.y()),
            1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z()));
 }
+// One camera of the imaging model.
+struct ImagingCamera
+{
+  std::string name;
+  const SensorSpec * spec{nullptr};
+  bool gimbal{false};
+  double pitch_down_rad{0.0};   // body-mounted cameras
+  Vec3 mount_offset_body{Vec3::Zero()};
+};
 }  // namespace
 
 class DetectorNode : public rclcpp::Node
@@ -112,6 +138,25 @@ public:
     noise_.p_miss = declare_parameter<double>("noise.p_miss", 0.1);
     rng_.seed(static_cast<std::uint64_t>(declare_parameter<int>("seed", 1)));
 
+    model_ = declare_parameter<std::string>("model", "range");
+    if (model_ != "range" && model_ != "imaging") {
+      throw std::invalid_argument("model must be 'range' or 'imaging'");
+    }
+    const auto size = declare_parameter<std::vector<double>>("entity_size_m", {0.5, 0.3, 1.75});
+    entity_size_ = Vec3(size.at(0), size.at(1), size.at(2));
+    if (model_ == "imaging") {
+      declare_cameras();
+    }
+    const double bias_h = declare_parameter<double>("nav_bias.horizontal_sigma_m", 0.0);
+    const double bias_v = declare_parameter<double>("nav_bias.vertical_sigma_m", 0.0);
+    {
+      std::mt19937_64 bias_rng(static_cast<std::uint64_t>(
+          declare_parameter<int>("nav_bias.seed", 100 + agent_id_)));
+      std::normal_distribution<double> n01(0.0, 1.0);
+      nav_bias_ = Vec3(bias_h * n01(bias_rng), bias_h * n01(bias_rng), bias_v * n01(bias_rng));
+      nav_bias_cov_ = Vec3(bias_h * bias_h, bias_h * bias_h, bias_v * bias_v).asDiagonal();
+    }
+
     const auto world_file = declare_parameter<std::string>("world_file", "");
     const auto model_paths = declare_parameter<std::vector<std::string>>("model_paths",
         std::vector<std::string>{});
@@ -139,6 +184,10 @@ public:
         rclcpp::SensorDataQoS(),
         [this](const px4_msgs::msg::VehicleOdometry & m) {on_px4(m);});
     }
+    if (std::any_of(cameras_.begin(), cameras_.end(), [](const auto & c) {return c.gimbal;})) {
+      gimbal_sub_ = create_subscription<coop_msgs::msg::GimbalState>("gimbal/state", 10,
+          [this](const coop_msgs::msg::GimbalState & m) {gimbal_ = m;});
+    }
     status_pub_ = create_publisher<coop_msgs::msg::AgentStatus>("status", 10);
     status_timer_ = create_timer(this, get_clock(), rclcpp::Duration::from_seconds(0.5),
         [this]() {publish_status();});
@@ -152,9 +201,78 @@ public:
       "range %.1f-%.1f m, p_miss %.2f", agent_id_, rate_hz, pose_source_.c_str(),
       occluders_.size(), cam_.hfov_rad * 180 / M_PI, cam_.vfov_rad * 180 / M_PI,
       cam_.pitch_down_rad * 180 / M_PI, cam_.min_range_m, cam_.max_range_m, noise_.p_miss);
+    if (nav_bias_.norm() > 0.0) {
+      RCLCPP_INFO(get_logger(), "navigation bias (%.2f, %.2f, %.2f) m", nav_bias_.x(),
+        nav_bias_.y(), nav_bias_.z());
+    }
   }
 
 private:
+  // camera_names: [name, ...]; per camera cameras.<name>.preset (see imaging.hpp),
+  // .mount (body | gimbal), .pitch_down_deg (body), .mount_offset_body.
+  // The first body camera is the one the agent's status reports (its search
+  // camera); `cam_` becomes its configuration.
+  void declare_cameras()
+  {
+    const auto names = declare_parameter<std::vector<std::string>>("camera_names",
+        std::vector<std::string>{});
+    if (names.empty()) {
+      throw std::invalid_argument("model 'imaging' needs a 'camera_names' list");
+    }
+    for (const auto & n : names) {
+      ImagingCamera c;
+      c.name = n;
+      const auto preset = declare_parameter<std::string>("cameras." + n + ".preset", "eo_wide_4k");
+      c.spec = sensor_preset(preset);
+      if (!c.spec) {
+        throw std::invalid_argument("unknown sensor preset '" + preset + "'");
+      }
+      const auto mount = declare_parameter<std::string>("cameras." + n + ".mount", "body");
+      if (mount != "body" && mount != "gimbal") {
+        throw std::invalid_argument("camera mount must be 'body' or 'gimbal'");
+      }
+      c.gimbal = mount == "gimbal";
+      c.pitch_down_rad = deg(declare_parameter<double>("cameras." + n + ".pitch_down_deg", 60.0));
+      const auto off = declare_parameter<std::vector<double>>("cameras." + n + ".mount_offset_body",
+          {0.0, 0.0, -0.1});
+      c.mount_offset_body = Vec3(off.at(0), off.at(1), off.at(2));
+      RCLCPP_INFO(get_logger(), "camera %s: %s, %dx%d, %.1f deg, %s%s", n.c_str(),
+        preset.c_str(), c.spec->width_px, c.spec->height_px, c.spec->hfov_rad * 180 / M_PI,
+        mount.c_str(), c.gimbal ? "" :
+        (" pitched " + std::to_string(static_cast<int>(std::lround(c.pitch_down_rad * 180 / M_PI))) +
+        " deg").c_str());
+      cameras_.push_back(c);
+    }
+    const auto search = std::find_if(cameras_.begin(), cameras_.end(),
+        [](const auto & c) {return !c.gimbal;});
+    if (search != cameras_.end()) {
+      cam_ = camera_config(*search->spec, search->pitch_down_rad);
+      cam_.mount_offset_body = search->mount_offset_body;
+      // The range out to which it finds a person half the time (seen at 45
+      // deg): what its coverage means, rather than the haze limit.
+      const double crit = critical_dimension_m(entity_size_.x(), entity_size_.y(),
+          entity_size_.z(), M_PI / 4);
+      const double ifov = search->spec->hfov_rad / search->spec->width_px;
+      cam_.max_range_m = std::min(search->spec->max_range_m, crit / (search->spec->n50_px * ifov));
+    }
+  }
+
+  // World pose of camera c, from the given body pose; nullopt for a gimbal
+  // camera before its first state.
+  std::optional<Pose> camera_world(const ImagingCamera & c, const Pose & body) const
+  {
+    if (!c.gimbal) {
+      CameraConfig cfg;
+      cfg.pitch_down_rad = c.pitch_down_rad;
+      cfg.mount_offset_body = c.mount_offset_body;
+      return camera_pose(body, cfg);
+    }
+    if (!gimbal_) {
+      return std::nullopt;
+    }
+    return gimbal_camera_pose(body, c.mount_offset_body, gimbal_->yaw, gimbal_->pitch_down);
+  }
+
   void on_ground_truth(const tf2_msgs::msg::TFMessage & m)
   {
     for (const auto & t : m.transforms) {
@@ -217,10 +335,11 @@ private:
 
   void publish_status()
   {
-    const std::optional<Pose> est = pose_source_ == "ground_truth" ? agent_true_ : nav_pose_;
+    std::optional<Pose> est = pose_source_ == "ground_truth" ? agent_true_ : nav_pose_;
     if (!est) {
       return;
     }
+    est->p += nav_bias_;
     coop_msgs::msg::AgentStatus s;
     s.stamp = now();
     s.agent = agent_id_;
@@ -267,7 +386,116 @@ private:
     } else {
       ++no_nav_frames_;
     }
+    if (est) {
+      est->p += nav_bias_;
+      nav.position_cov += nav_bias_cov_;
+    }
 
+    if (model_ == "imaging") {
+      imaging_frame(out, est, nav);
+    } else {
+      range_frame(out, est, nav);
+    }
+    last_detections_ = static_cast<std::uint8_t>(out.detections.size());
+    det_pub_->publish(out);
+
+    if (frames_ % 100 == 0) {
+      RCLCPP_INFO(get_logger(),
+        "frames %lu: entity sightings %lu, dropped %lu, detections %lu, frames without "
+        "navigation %lu", static_cast<unsigned long>(frames_),
+        static_cast<unsigned long>(visible_frames_), static_cast<unsigned long>(dropped_),
+        static_cast<unsigned long>(detections_), static_cast<unsigned long>(no_nav_frames_));
+    }
+  }
+
+  static coop_msgs::msg::Detection to_msg(const Measurement & m, std::uint8_t class_id)
+  {
+    coop_msgs::msg::Detection d;
+    d.class_id = class_id;
+    d.confidence = static_cast<float>(m.confidence);
+    for (int i = 0; i < 3; ++i) {
+      d.position[static_cast<std::size_t>(i)] = static_cast<float>(m.position_world[i]);
+    }
+    const auto & C = m.covariance_world;
+    d.covariance = {static_cast<float>(C(0, 0)), static_cast<float>(C(0, 1)),
+      static_cast<float>(C(0, 2)), static_cast<float>(C(1, 1)),
+      static_cast<float>(C(1, 2)), static_cast<float>(C(2, 2))};
+    return d;
+  }
+
+  void imaging_frame(
+    coop_msgs::msg::DetectionArray & out, const std::optional<Pose> & est,
+    const NavUncertainty & nav)
+  {
+    // A gimbal's pointing comes from the inertial attitude; its error is in
+    // the sensor's pointing sigma, not the airframe's attitude variance.
+    NavUncertainty nav_gimbal = nav;
+    nav_gimbal.attitude_var.setZero();
+    for (std::size_t e = 0; e < entity_frames_.size(); ++e) {
+      if (!entity_true_[e]) {
+        continue;
+      }
+      const Vec3 entity = entity_true_[e]->p + Vec3(0.0, 0.0, entity_ref_height_);
+      coop_msgs::msg::VisibilityTruth vt;
+      vt.stamp = gt_stamp_;
+      vt.agent = agent_id_;
+      vt.entity = entity_frames_[e];
+      std::optional<std::size_t> best;
+      View best_view;
+      for (std::size_t c = 0; c < cameras_.size(); ++c) {
+        const auto pose = camera_world(cameras_[c], *agent_true_);
+        if (!pose) {
+          continue;
+        }
+        const View v = view(*pose, *cameras_[c].spec, entity, entity_size_,
+            1.0 - noise_.p_miss, occluders_);
+        vt.in_fov = vt.in_fov || v.vis.in_fov;
+        vt.in_range = vt.in_range || (v.vis.in_fov && v.vis.in_range);
+        const bool better = !best || v.p_detect > best_view.p_detect ||
+          (v.vis.in_fov && !best_view.vis.in_fov);
+        if (better) {
+          best = c;
+          best_view = v;
+        }
+      }
+      if (best) {
+        vt.visible = best_view.vis.visible();
+        vt.occluded = vt.in_range && !vt.visible;
+        vt.range_m = static_cast<float>(best_view.vis.range_m);
+        vt.camera = static_cast<std::uint8_t>(*best);
+        vt.pixels = static_cast<float>(best_view.pixels);
+        vt.p_detect = static_cast<float>(best_view.p_detect);
+      }
+      vis_pub_->publish(vt);
+      if (!vt.visible) {
+        continue;
+      }
+      ++visible_frames_;
+      std::bernoulli_distribution hit(best_view.p_detect);
+      if (!hit(rng_)) {
+        ++dropped_;
+        continue;
+      }
+      if (!est || out.detections.size() >= 16) {
+        continue;
+      }
+      const ImagingCamera & cam = cameras_[*best];
+      const auto cam_true = camera_world(cam, *agent_true_);
+      const auto cam_est = camera_world(cam, *est);
+      const auto m = geolocate(*cam_true, *cam_est, entity, angular_sigma_rad(*cam.spec),
+          cam.gimbal ? nav_gimbal : nav, rng_);
+      if (!m) {
+        continue;
+      }
+      out.detections.push_back(to_msg(*m, class_id_));
+      ++detections_;
+    }
+  }
+
+  void range_frame(
+    coop_msgs::msg::DetectionArray & out, const std::optional<Pose> & est,
+    const NavUncertainty & nav)
+  {
     for (std::size_t e = 0; e < entity_frames_.size(); ++e) {
       if (!entity_true_[e]) {
         continue;
@@ -299,28 +527,8 @@ private:
         continue;
       }
       const Measurement m = synthesize(*agent_true_, *est, nav, entity, cam_, noise_, rng_);
-      coop_msgs::msg::Detection d;
-      d.class_id = class_id_;
-      d.confidence = static_cast<float>(m.confidence);
-      for (int i = 0; i < 3; ++i) {
-        d.position[static_cast<std::size_t>(i)] = static_cast<float>(m.position_world[i]);
-      }
-      const auto & C = m.covariance_world;
-      d.covariance = {static_cast<float>(C(0, 0)), static_cast<float>(C(0, 1)),
-        static_cast<float>(C(0, 2)), static_cast<float>(C(1, 1)),
-        static_cast<float>(C(1, 2)), static_cast<float>(C(2, 2))};
-      out.detections.push_back(d);
+      out.detections.push_back(to_msg(m, class_id_));
       ++detections_;
-    }
-    last_detections_ = static_cast<std::uint8_t>(out.detections.size());
-    det_pub_->publish(out);
-
-    if (frames_ % 100 == 0) {
-      RCLCPP_INFO(get_logger(),
-        "frames %lu: entity sightings %lu, dropped %lu, detections %lu, frames without "
-        "navigation %lu", static_cast<unsigned long>(frames_),
-        static_cast<unsigned long>(visible_frames_), static_cast<unsigned long>(dropped_),
-        static_cast<unsigned long>(detections_), static_cast<unsigned long>(no_nav_frames_));
     }
   }
 
@@ -335,6 +543,11 @@ private:
   double nav_timeout_s_{0.5};
   CameraConfig cam_;
   NoiseConfig noise_;
+  std::string model_;
+  Vec3 entity_size_{0.5, 0.3, 1.75};
+  std::vector<ImagingCamera> cameras_;
+  Vec3 nav_bias_{Vec3::Zero()};
+  Mat3 nav_bias_cov_{Mat3::Zero()};
   Occluders occluders_;
   std::mt19937_64 rng_;
 
@@ -345,6 +558,7 @@ private:
   std::optional<Pose> nav_pose_;
   NavUncertainty nav_;
   builtin_interfaces::msg::Time nav_stamp_;
+  std::optional<coop_msgs::msg::GimbalState> gimbal_;
 
   // Counters
   rclcpp::Time last_frame_stamp_{0, 0, RCL_ROS_TIME};
@@ -359,6 +573,7 @@ private:
   rclcpp::Subscription<tf2_msgs::msg::TFMessage>::SharedPtr gt_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr nav_sub_;
   rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr px4_sub_;
+  rclcpp::Subscription<coop_msgs::msg::GimbalState>::SharedPtr gimbal_sub_;
   rclcpp::Publisher<coop_msgs::msg::AgentStatus>::SharedPtr status_pub_;
   rclcpp::TimerBase::SharedPtr status_timer_;
   rclcpp::Publisher<coop_msgs::msg::DetectionArray>::SharedPtr det_pub_;

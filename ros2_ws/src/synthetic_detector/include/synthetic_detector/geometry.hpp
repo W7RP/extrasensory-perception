@@ -44,7 +44,8 @@ struct Cylinder
   double half_length{0.0};
 };
 
-// Sphere (a tree canopy, treated as solid).
+// Sphere (a tree canopy): solid to visible light, partly transparent to a
+// thermal camera (see `blockage` and imaging.hpp).
 struct Sphere
 {
   Vec3 center{Vec3::Zero()};
@@ -76,5 +77,14 @@ struct Occluders
 
 // True if anything in the set blocks the segment.
 [[nodiscard]] bool occluded(const Vec3 & a, const Vec3 & b, const Occluders & occ) noexcept;
+
+// What lies on the segment: whether a solid shape (box, cylinder) blocks it,
+// and how many canopies (spheres) it passes through.
+struct Blockage
+{
+  bool solid{false};
+  int canopies{0};
+};
+[[nodiscard]] Blockage blockage(const Vec3 & a, const Vec3 & b, const Occluders & occ) noexcept;
 
 }  // namespace synthetic_detector

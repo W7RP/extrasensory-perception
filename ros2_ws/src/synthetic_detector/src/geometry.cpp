@@ -117,4 +117,27 @@ bool occluded(const Vec3 & a, const Vec3 & b, const Occluders & occ) noexcept
   return false;
 }
 
+Blockage blockage(const Vec3 & a, const Vec3 & b, const Occluders & occ) noexcept
+{
+  Blockage r;
+  for (const auto & x : occ.boxes) {
+    if (segment_intersects(a, b, x)) {
+      r.solid = true;
+      return r;
+    }
+  }
+  for (const auto & x : occ.cylinders) {
+    if (segment_intersects(a, b, x)) {
+      r.solid = true;
+      return r;
+    }
+  }
+  for (const auto & x : occ.spheres) {
+    if (segment_intersects(a, b, x)) {
+      ++r.canopies;
+    }
+  }
+  return r;
+}
+
 }  // namespace synthetic_detector
