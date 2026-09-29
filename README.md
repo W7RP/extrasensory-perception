@@ -16,14 +16,19 @@ Everything runs on the same stack a real vehicle would: **PX4** SITL for
 flight control, **Gazebo Harmonic** for physics and sensors, and **ROS 2**
 nodes in C++20 for navigation, detection and fusion. There is no hardware.
 
-![Phase 1: the scene from above, track error over time, and who could see the entity when](docs/media/phase1_fusion.png)
+![Playing the device: a person behind a building, highlighted from what the agents see](docs/media/phase3_game.png)
 
-*Phase 1, one scored run. Left: the building (grey), the entity's path behind
-it, the two agents' routes on either side, and the fused track, coloured by
-how many agents were seeing the entity (green both, amber one, grey nobody:
-the track is coasting on prediction). Right: horizontal error of the fused
-track and of each agent alone, when each tracker had a track at all, and the
-true visibility timeline.*
+*Phase 3, playing the device. You walk the map with WASD; the grey building
+in front of you hides a person, drawn where they really are (cyan: an agent
+sees them right now, 0.2 s ago) with a fainter grey prediction of another
+behind it. The minimap shows the map, you and your view (white and green),
+the two agents placed around you by the planner and their views (blue), the
+tracks, and the fog of war: ground only an agent sees is blue, ground nobody
+sees is dark.*
+
+Can it work for real? It is a simulation, but built as a proof of concept on
+the same software you would fly: [what carries over, and what does
+not](docs/real_world.md).
 
 ## Phase 1: two agents, one fused track
 
@@ -33,6 +38,15 @@ agent localises itself with its own error-state Kalman filter and detects the
 entity with a synthetic detector, and a tracker fuses both agents' detections
 into one track. The same tracker fed by one agent at a time is the baseline.
 The link is perfect in this phase.
+
+![Phase 1: the scene from above, track error over time, and who could see the entity when](docs/media/phase1_fusion.png)
+
+*Phase 1, one scored run. Left: the building (grey), the entity's path behind
+it, the two agents' routes on either side, and the fused track, coloured by
+how many agents were seeing the entity (green both, amber one, grey nobody:
+the track is coasting on prediction). Right: horizontal error of the fused
+track and of each agent alone, when each tracker had a track at all, and the
+true visibility timeline.*
 
 Over three scored runs (a fourth, with the GUI, is in the same range; a
 fifth failed, see "Things that broke"):
@@ -76,10 +90,37 @@ real person.*
 Over three scored runs, whenever the entity was hidden from the device but
 visible to an agent, it was highlighted in 99 % of the camera frames, 5-10 px
 (median) from where it really was, from data 0.06-0.13 s old. That is the
-baseline Phase 3's degraded link will be measured against. The skeleton
+baseline Phase 4's degraded link will be measured against. The skeleton
 overlay, registration of the agents' navigation bias, and a comparison of
 where to fuse are the next milestones
 ([write-up](docs/phase2_device_overlay.md)).
+
+## Phase 3: the playable scene
+
+You are the device now. `scripts/demo_phase3.sh --play` opens a game window
+on a map generated from a seed (buildings, walls, shipping containers, crates
+and trees, in colour) where several people walk their own loops. You walk it
+with WASD and the mouse. Two GPS agents fly above the rooftops, re-tasked
+every second by a planner that places them around you where, between them,
+they see the most ground you cannot. Whatever they see is drawn on your view
+through the walls, and the minimap shows who can see what.
+
+![A generated map: map 7](docs/media/phase3_map.png)
+
+Over three scored sessions with four people on the map: whenever an agent
+could see someone you could not, they were highlighted on your view 93-96 %
+of the time, a median 7-9 px from where they really were, from data about a
+tenth of a second old. The device's fused picture of all four scored a MOTA
+(multi-object tracking accuracy) of 0.96-0.97, against 0.40-0.68 from either
+agent alone. The honest limits: two agents cover only 35-43 % of the ground
+hidden from you at any moment, and people who turn a corner while nobody
+watches often come back under a new track id.
+
+The same session runs scripted and headless as a scored benchmark, and a
+played session is scored the same way when you press Esc. Nothing you see in
+the game uses ground truth: the overlay, the minimap and the planner work
+from the map, the device's own position, the agents' own reports and the
+tracks ([write-up](docs/phase3_playable_scene.md)).
 
 ## Why it's built this way
 
@@ -97,7 +138,7 @@ where to fuse are the next milestones
   straight out of the Gazebo world with libsdformat, so what blocks the view
   in the physics is exactly what blocks it in the detector.
 - **Small messages, from day one.** A frame with one detection is 68 bytes on
-  the wire, a track 64. Phase 3 pushes these through a bandwidth-limited link,
+  the wire, a track 64. Phase 4 pushes these through a bandwidth-limited link,
   so the format was designed for that before there was a link.
 - **Real-time discipline, measured.** The fusion node has a dedicated ingest
   thread, fixed-capacity storage, a non-blocking hand-off, and live counters
@@ -199,15 +240,16 @@ flowchart LR
 | `agent_estimation` | the ESKF (from quad-autonomy-sim) and the shared real-time instruments |
 | `synthetic_detector` | sensor model, detector node, Gazebo ground-truth bridge |
 | `track_fusion` | Kalman filter, swappable associators, tracker, fusion node |
-| `device_view` | the device's see-through overlay on its camera image |
+| `device_view` | the device's see-through overlay, its controller, and the game window |
+| `overwatch` | the planner that places the agents around the device |
 
 Nodes, topics, frames and timing are in
 [docs/architecture.md](docs/architecture.md).
 
 ```
 firmware/     PX4 parameters and patches (incl. the multi-vehicle optical-flow fix)
-sim/          Gazebo world, entity and device models, scenario file, RViz views
-ros2_ws/src/  the six packages above
+sim/          worlds (hand-made and generated), models, scenarios, map generator, RViz views
+ros2_ws/src/  the seven packages above
 scripts/      simulator launcher, demo, evaluation, environment checks
 docs/         architecture, per-phase write-ups, roadmap, environment
 ```
@@ -218,8 +260,9 @@ docs/         architecture, per-phase write-ups, roadmap, environment
 |---|---|---|
 | 1. Two-agent fusion | two agents, one hidden entity, perfect link, one fused track, scored against ground truth | done, tag `phase1-two-agent-fusion` |
 | 2. The device | a ground node with its own pose, camera and occlusion-aware view, fusing what the agents send and drawing the see-through overlay (box, outline, skeleton) on its camera image | in progress: device, fusion and box + outline overlay done; skeleton, registration and fusion placement next |
-| 3. The link | bandwidth caps with priority queues, latency, jitter, range- and occlusion-dependent loss, outages; latency and accuracy against link quality are the headline result, with the overlay degrading from skeleton to box as the link gets worse | planned |
-| 4. More agents | more agents and coverage-aware patrol planning | planned |
+| 3. The playable scene | generated colourful maps, several people, you drive the device in a game window, agents placed around you by a planner | done |
+| 4. The link | bandwidth caps with priority queues, latency, jitter, range- and occlusion-dependent loss, outages; latency and accuracy against link quality are the headline result, with the overlay degrading from skeleton to box as the link gets worse | planned |
+| 5. More agents, harder maps | 3-6 agents, planning with lookahead, larger and denser maps, people who react | planned |
 
 The plan for each is in [docs/roadmap.md](docs/roadmap.md).
 
@@ -240,7 +283,12 @@ ground device and scores its see-through overlay (`--gui` shows the device's
 view live in RViz). The log directory gets `overlay.mp4`, the device's
 annotated camera view for the whole flight, and a still every 2 s.
 
-**Phases 3-4.** Not built yet.
+**Phase 3.** `./scripts/demo_phase3.sh --play` to play (WASD to walk, Q/E
+or the right mouse button to turn, Shift to run, Esc to end);
+`./scripts/demo_phase3.sh` for the scored, headless session. `--seed N` picks
+another map, generated on first use.
+
+**Phases 4-5.** Not built yet.
 
 ## License
 

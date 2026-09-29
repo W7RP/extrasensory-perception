@@ -1,4 +1,4 @@
-# Roadmap: Phases 2-4 (plan only)
+# Roadmap
 
 ## The goal
 
@@ -16,17 +16,26 @@ The project is both halves of that:
   the real entity, and how that holds up as the link between agents and device
   degrades.
 
-Phase 1 built the foundation: two agents, a perfect link, one fused track.
-Phase 2 is under way, in four milestones:
+| phase | what | status |
+|---|---|---|
+| 1. Two-agent fusion | two agents, one hidden entity, perfect link, one fused track | done ([write-up](phase1_two_agent_fusion.md)) |
+| 2. The device | the ground device, its camera and the see-through overlay | milestone 1 of 4 done ([write-up](phase2_device_overlay.md)); milestones 2-4 below |
+| 3. The playable scene | you drive the device on a generated map; agents positioned around you by a planner | done ([write-up](phase3_playable_scene.md)) |
+| 4. The link | the degraded link between agents and device; the headline curves | planned |
+| 5. More agents, harder maps | 3-6 agents, larger and denser maps | planned |
 
-| milestone | status |
+Phase 3 was added after Phase 2's first milestone, when the goal became a
+scene you can walk; the link (first planned as Phase 3) and scaling up (first
+Phase 4) moved one place down. Phase 2's remaining milestones:
+
+| Phase 2 milestone | status |
 |---|---|
-| 1. device, its camera, fusion at the device, box + outline overlay | done ([phase2_device_overlay.md](phase2_device_overlay.md)) |
+| 1. device, its camera, fusion at the device, box + outline overlay | done |
 | 2. skeleton overlay: animated entity, keypoints measured by the agents | next |
 | 3. registration: estimating each agent's navigation bias | planned |
 | 4. fusion placement: detections at the device vs agent-side tracks | planned |
 
-Everything else below is a plan.
+Everything below is a plan unless marked done.
 
 ## Phase 2: the device
 
@@ -74,7 +83,7 @@ A ground-side node that consumes the picture, with a pose and a view of its own.
   the overlay's error in the image (pixels, and overlap of the drawn box with
   the true one).
 
-## Phase 3: the link (the headline result)
+## Phase 4: the link (the headline result)
 
 A link model node between every agent and the device: messages go in, some
 come out later.
@@ -102,16 +111,23 @@ come out later.
   matching visual: side-by-side overlay videos at several link qualities,
   showing the highlight lag and blur as the link gets worse.
 
-## Phase 4: more agents, planned coverage
+- **In the game**: the link settings become part of a session's difficulty,
+  and the minimap shows each agent's link quality, so lag and dropouts are
+  something you see while playing.
+- **The planner** (Phase 3) gains a link term: an agent that loses its link to
+  the device is no use to it, so spots with line of sight to the device weigh
+  more.
 
-- **N agents** (4-6): the simulator, parameters and message set are already
-  per-agent; the limits to watch are Gazebo's real-time factor with N flow
-  cameras and link contention.
-- **Coverage-aware patrol planning**: route agents to minimise the time the
-  entity is visible to nobody (and, with Phase 3, to keep a link to the
-  device), instead of Phase 1's scripted routes.
-- **Evaluation**: continuity and latency against the number of agents and the
-  planner, on the Phase 3 link.
+## Phase 5: more agents, harder maps
+
+- **N agents** (3-6): the simulator, parameters, messages and planner are
+  already per-agent; the limits to watch are Gazebo's real-time factor and
+  link contention.
+- **Planning with lookahead**: along the device's likely path, and towards
+  where people were last seen, instead of the next second only.
+- **Larger, denser maps**, and people who react (stop, hide, crowd).
+- **Evaluation**: availability, coverage and MOTA against the number of agents,
+  on the Phase 4 link.
 
 ## Beyond
 

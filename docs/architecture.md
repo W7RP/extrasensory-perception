@@ -79,6 +79,18 @@ detector (to decide what its camera can see) and the evaluation read.
 | `/device/overlay/truth` (coop_msgs/OverlayTruth) | per frame, how the overlay matched the truth (evaluation only) |
 | `device` in `/sim/ground_truth` | the device's pose (Phase 2 assumes a well-localised device) |
 
+## The playable scene (Phase 3)
+
+| node / topic | what |
+|---|---|
+| `/device/device_controller` | drives the device from `~/cmd` (teleop) with the walker model; publishes `/device/status` in every mode |
+| `/device/game_view` | the game window: overlay image, minimap with fog of war, HUD; keyboard and mouse to `/device/device_controller/cmd`; `/game/quit` when you end |
+| `/overwatch_planner` -> `/agent_<n>/goal` (coop_msgs/AgentGoal) | places the agents around the device, once a second |
+| `/agent_<n>/status` (coop_msgs/AgentStatus) | each agent's own position report and camera coverage (from its detector) |
+| `/device/status` (coop_msgs/DeviceStatus) | the device's pose, the one message that flows from the device up to the agents |
+| `/agent_<n>/offboard` (`route_source: goal`) | flies the planner's goals |
+| detector `pose_source: px4` | detections placed with PX4's EKF2 odometry (GPS agents) |
+
 ## Frames
 
 - **world**: Gazebo's world frame, ENU (x east, y north, z up), metres. Every
@@ -122,7 +134,7 @@ The fusion node and the ESKF share one design and one set of instruments
 
 ## Messages (`coop_msgs`)
 
-Small on purpose, because Phase 3 pushes them through a bandwidth-limited
+Small on purpose, because Phase 4 pushes them through a bandwidth-limited
 link model. Measured CDR sizes:
 
 | message | size |
@@ -146,7 +158,8 @@ covariance. `VisibilityTruth` is evaluation-only.
 | `agent_estimation` | C++20 | the ESKF (copied from quad-autonomy-sim) and the shared real-time instruments |
 | `synthetic_detector` | C++20 | sensor model (FOV, range, ray-cast occlusion, noise, dropout), detector node, ground-truth bridge |
 | `track_fusion` | C++20 | Kalman filter, associators, tracker, reorder buffer, fusion node |
-| `device_view` | C++20 | the see-through overlay: projection, box, silhouette, ellipse, styles (OpenCV for drawing) |
+| `device_view` | C++20 | the see-through overlay (projection, box, silhouette, ellipse, styles), the device controller (walker model), the game window (SDL2, minimap, fog of war) |
+| `overwatch` | C++20 | the planner that places the agents around the device (hidden ground, candidate spots, greedy coverage, hysteresis) |
 
 Each C++ package keeps its logic in a ROS-free library with unit tests, and
 the node is a thin I/O layer around it.

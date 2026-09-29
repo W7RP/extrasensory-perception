@@ -18,6 +18,7 @@ checks the same list and changes nothing.
 | Compiler / build | g++ 11.4.0, CMake 3.22.1, colcon; C++20 |
 | Eigen | 3.4.0 |
 | Python | 3.10.12; NumPy 2.2.6 and matplotlib 3.10.9 in `~/.local` (see note 3) |
+| Game window | SDL2 2.0.20 (`libsdl2-dev`), OpenCV 4.5.4 (`libopencv-dev`), both already installed |
 
 Everything above was already installed by quad-autonomy-sim's setup scripts;
 this project installed nothing. The one change to the shared toolchain is
@@ -47,7 +48,10 @@ behaviour: quad-autonomy-sim's Phase 2 demo was re-run before and after it
    on, and PX4 instance 1 sat at 100 % CPU in its work-queue manager trying to
    keep up. With shadows off (this repo's world) it runs at about 0.85-0.95x,
    and the PX4 instances at ~13 % CPU each.
-3. **NumPy 2 vs apt matplotlib** (from quad-autonomy-sim): PX4's `ubuntu.sh`
-   put NumPy 2.2.6 in `~/.local`, which breaks Ubuntu's matplotlib; a user
-   matplotlib 3.10.9 fixes it. The evaluation prints a harmless "Unable to
-   import Axes3D" warning because both matplotlib versions are installed.
+3. **NumPy 2 vs apt Python packages** (from quad-autonomy-sim): PX4's
+   `ubuntu.sh` put NumPy 2.2.6 in `~/.local`, which breaks Ubuntu's
+   matplotlib, OpenCV (`cv2`) and SciPy. A user matplotlib 3.10.9 fixes
+   plotting; this repo avoids the other two in Python (drawing and video are
+   in C++, track matching is plain NumPy). The evaluation prints a harmless
+   "Unable to import Axes3D" warning because both matplotlib versions are
+   installed.

@@ -85,6 +85,31 @@ In the image, cyan means "behind the wall, and the agents see it right now",
 green "the device can see it itself", grey dashed "predicted, nobody sees it";
 the dashed magenta box is the true position (simulation only).
 
+## Phase 3: play it
+
+```bash
+./scripts/demo_phase3.sh --play              # you are the device, on map 7
+./scripts/demo_phase3.sh --seed 12 --play    # another map, generated on first use
+./scripts/demo_phase3.sh --gui --play        # also the Gazebo GUI (a third-person view)
+./scripts/demo_phase3.sh                     # the scored session: scripted device, headless
+DURATION=240 ./scripts/demo_phase3.sh        # a longer scored session [s of simulation]
+```
+
+The game window opens once the agents and the device are up (about a
+minute). Keys: W/S (or Up/Down) walk, A/D step sideways, Q/E (or Left/Right,
+or the mouse with the right button held) turn, Shift run, Tab capture the
+mouse, M minimap, F fog of war, H help, Esc end. The agents take off by
+themselves and follow you; when you press Esc they land and the session is
+scored. In `logs/phase3_<timestamp>/`: `game.mp4` (what the window showed),
+`overlay.mp4` (the device camera with the overlay), stills in `frames/`,
+`results.txt`, `metrics.json` and `phase3.png` (the session from above).
+
+Maps: `python3 sim/tools/generate_map.py --seed N` writes
+`sim/worlds/map_N.sdf` and `sim/scenarios/map_N.yaml`; `--help` lists the
+knobs (size, number of buildings, walls, containers, crates, trees, entities
+and agents, the agents' ring radius and camera range, the device camera,
+shadows).
+
 ## By hand
 
 Three terminals, each with `source scripts/env.sh`:

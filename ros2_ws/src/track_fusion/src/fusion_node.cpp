@@ -34,7 +34,7 @@
 // Unlike the ESKF's PX4 inputs, DetectionArray cannot come from a pre-allocated
 // message pool: rclcpp's MessagePoolMemoryStrategy only accepts fixed-size
 // messages, and a fixed Detection[16] array would put all 16 slots on the wire
-// every frame, which the Phase 3 bandwidth budget rules out. So rclcpp's take
+// every frame, which the Phase 4 bandwidth budget rules out. So rclcpp's take
 // path allocates the incoming message; ingest_thread_allocations counts that
 // separately from hot_path_allocations (our code).
 //
@@ -154,7 +154,7 @@ public:
     rclcpp::SubscriptionOptions opts;
     opts.callback_group = ingest_group_;
     // Reliable, as detectors publish: on a perfect link nothing is lost. The
-    // Phase 3 link model sits between the two and decides what arrives.
+    // Phase 4 link model sits between the two and decides what arrives.
     const auto qos = rclcpp::QoS(20).reliable();
     for (const auto a : agents) {
       if (a < 1 || a > static_cast<std::int64_t>(kMaxAgents)) {
