@@ -91,6 +91,13 @@
         </visual>
       </link>
     </model>
+    <!-- The ground device (Phase 2), parked at the start of its route; the
+         scenario moves it. Phase 1 scenarios simply leave it standing. -->
+    <include>
+      <uri>model://device</uri>
+      <name>device</name>
+      <pose>-12 4 0 0 0 0</pose>
+    </include>
     <!-- The entity of interest, parked at the start of its path; the scenario
          (sim/scenarios/two_agent_wall.yaml) moves it. -->
     <include>

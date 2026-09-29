@@ -6,20 +6,24 @@ Gazebo Harmonic world, models and scenarios.
 |---|---|
 | `worlds/coop_field.sdf` | Phase 1 world: PX4's default physics, magnetic field and geodetic origin, the textured `flow_ground` (optical flow needs texture), one 2 x 20 x 6 m building centred on the origin, and the entity parked behind it. Shadows are off (see below). |
 | `models/entity_person` | the entity of interest: a 1.75 m person-sized shape (cylinder body, sphere head), static and moved kinematically |
+| `models/device` | the ground device (Phase 2): a 640 x 480, 15 Hz, 70 deg camera at 1.6 m on a post, static and moved kinematically |
 | `models/flow_ground` | 200 m textured ground, visual only (from quad-autonomy-sim) |
 | `scenarios/two_agent_wall.yaml` | where everything is: agent spawn poses and routes, the entity's path, detector and fusion settings |
 | `rviz/phase1.rviz` | RViz view: building, true positions (TF), fused and baseline tracks |
+| `rviz/phase2.rviz` | the same map with the device's tracks, plus the device's see-through camera view |
 
 **The world file is the occlusion model.** The synthetic detector reads every
 box collision of every static model from `coop_field.sdf` (libsdformat, with
 poses resolved) and ray-casts against those boxes. Moving or resizing the
 building here changes occlusion everywhere; nothing is duplicated.
 
-**The entity moves kinematically.** `scripts/entity_mover.py` walks it back
-and forth along the scenario's path with Gazebo's `set_pose` at 20 Hz of
-simulation time (an in-process gz-transport request, under 1 ms). Its
-position is a function of simulation time only, and everything else reads it
-back from Gazebo.
+**The entity and the device move kinematically.** `scripts/scene_mover.py`
+walks both back and forth along their paths in the scenario (the device
+turned to face its look-at point) with Gazebo's `set_pose` at 20 Hz of
+simulation time (an in-process gz-transport request, under 1 ms). Their
+positions are functions of simulation time only, and everything else reads
+them back from Gazebo. The device's camera, being a sensor on a static model,
+follows the model when it is moved (checked: 15 Hz while moving).
 
 **Agents** are PX4's stock `x500_flow`, spawned by PX4 itself (instance n
 spawns `x500_flow_n`); nothing here overrides their models.

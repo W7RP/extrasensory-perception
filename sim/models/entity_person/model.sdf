@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <sdf version="1.9">
   <!-- The entity of interest: a simple person-sized shape (1.75 m tall).
-       Kinematic: static, so physics never moves it; scripts/entity_mover.py
+       Kinematic: static, so physics never moves it; scripts/scene_mover.py
        moves it along the scenario's path with Gazebo's set_pose service.
        Model origin is on the ground, between the feet. No collision: agents
        never fly near it, and a collision would only matter to physics. -->

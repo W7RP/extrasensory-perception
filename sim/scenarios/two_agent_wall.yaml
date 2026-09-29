@@ -37,6 +37,22 @@ agents:
     speed_mps: 1.0
     route: [[6.0, 16.0], [-12.0, 16.0], [6.0, 16.0], [-12.0, 16.0], [-8.0, 16.0]]
 
+# The ground device (Phase 2): walks back and forth from the building's west
+# side, where the building hides the entity, round its south end to where it
+# has a direct view (about 12 s of each cycle), and back. Its camera always faces `look_at`, the
+# middle of the entity's path, so the entity is in the image (behind the wall
+# or not) most of the time. Phase 1 ignores this section.
+device:
+  model: device                  # Gazebo model name
+  speed_mps: 0.7                 # walking pace
+  path: [[-12.0, 6.0], [-12.0, -6.0], [-2.0, -14.0], [3.0, -13.0]]
+  look_at: [4.0, 0.0]
+  camera:
+    mount_xyz: [0.0, 0.0, 1.6]   # must match sim/models/device/model.sdf
+    image_topic: /device/camera/image
+    info_topic: /device/camera/camera_info
+  entity_size_m: [0.5, 0.5, 1.75]   # box drawn for a person-class track: x, y, z
+
 px4:
   model: x500_flow           # flow + rangefinder, no GPS: the ESKF's inputs
 
