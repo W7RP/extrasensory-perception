@@ -39,3 +39,16 @@ CAL_MAG0_ZOFF 0.0
 # drawn into the map as displaced surfaces). PX4's own SIH airframes set 0 for
 # the same reason. On hardware keep the receiver's real latency (default 110).
 EKF2_GPS_DELAY 0
+
+# uXRCE-DDS timestamp synchronisation off. With it on, the client converts
+# PX4 time to the agent's wall clock. In SITL PX4 time follows the simulation
+# clock, so whenever Gazebo runs below real time the converted stamps stretch
+# and are corrected in steps. Measured with two agents and the device camera
+# (RTF ~0.85), per agent per flight: 8,139 IMU samples, none missing, but
+# stamped across 131 s for a 98 s flight, with 169-185 apparent gaps and 7-8
+# jumps over 100 ms. The ESKF bridged each "gap" and re-anchored on each jump,
+# and in the worst runs drifted by a metre. Off: 0 gaps, 0 steps, and every
+# PX4 stamp is raw PX4 time = simulation time, the same clock as /clock.
+# Messages sent to PX4 are unaffected (they use timestamp 0: stamp on arrival).
+# On hardware keep it on: there PX4 and the companion both run in real time.
+UXRCE_DDS_SYNCT 0
