@@ -108,11 +108,15 @@ ok "Gazebo world $SC_WORLD is up"
 # Simulation-side ROS bridges. Executables are run directly, not through
 # `ros2 run`, whose wrapper process can leave the node orphaned when killed.
 # One bridge process: /clock always, the device camera when the scenario has
-# a device (/clock stays the first argument: demo_common.sh matches on it).
+# a device, the zoom camera when an agent has one (/clock stays the first
+# argument: demo_common.sh matches on it).
 bridge_topics=("/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock")
 if ((SC_DEVICE)); then
   bridge_topics+=("$SC_DEVICE_IMAGE@sensor_msgs/msg/Image[gz.msgs.Image"
     "$SC_DEVICE_INFO@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo")
+fi
+if ((${SC_ZOOM:-0})); then
+  bridge_topics+=("$SC_ZOOM_IMAGE@sensor_msgs/msg/Image[gz.msgs.Image")
 fi
 "$(ros2 pkg prefix ros_gz_bridge)/lib/ros_gz_bridge/parameter_bridge" \
   "${bridge_topics[@]}" >"$logdir/clock_bridge.log" 2>&1 &

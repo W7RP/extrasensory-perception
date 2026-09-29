@@ -10,6 +10,13 @@
 #   scripts/demo_phase3.sh --gui ...         # also the Gazebo GUI
 #   DURATION=180 scripts/demo_phase3.sh      # scored session length [s of simulation]
 #   GAME_INPUT="x:20,w:8,q:2,wR:6" scripts/demo_phase3.sh --play   # scripted keys (keys:seconds)
+#   scripts/demo_phase3.sh --map map_11_high  # any generated scenario by name (Phase 4 uses this)
+#
+# Overrides for this session's copy of the scenario (Phase 4's sweeps):
+#   ALTITUDE=140     every agent's altitude [m]
+#   NAV_BIAS=1.5,2.5 agents' constant navigation error, 1-sigma horizontal,vertical [m]
+#   THERMAL=1        imaging-model agents also carry a thermal camera (thermal_640)
+#   DEMO_TAG=phase4  log directory prefix;  DEMO_EVAL=eval_phase4.py  scoring script
 #
 # Same lifecycle rules as the other demos: clears stale processes, polls for
 # every stage, tears everything down on exit (Ctrl-C too). A played session
@@ -27,19 +34,21 @@ source "$REPO_ROOT/scripts/lib/demo_common.sh"
 gui=0
 play=0
 seed=7
+map=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --play) play=1 ;;
     --gui) gui=1 ;;
     --headless) gui=0 ;;
     --seed) seed="$2"; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    --map) map="$2"; shift ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
 done
 
-demo_logdir phase3
+demo_logdir "${DEMO_TAG:-phase3}"
 logdir="$COOP_LOG_DIR"
 trap demo_cleanup EXIT
 trap 'exit 130' INT TERM
@@ -47,19 +56,36 @@ log "logs -> $logdir"
 demo_clear_stale
 
 # The map: generated once per seed, then reused (it is deterministic).
-if [[ ! -f "$REPO_ROOT/sim/scenarios/map_$seed.yaml" ]]; then
-  log "generating map $seed"
-  python3 "$REPO_ROOT/sim/tools/generate_map.py" --seed "$seed"
+if [[ -z "$map" ]]; then
+  map="map_$seed"
+  if [[ ! -f "$REPO_ROOT/sim/scenarios/$map.yaml" ]]; then
+    log "generating map $seed"
+    python3 "$REPO_ROOT/sim/tools/generate_map.py" --seed "$seed"
+  fi
 fi
-# This session's copy of the scenario: driven or scripted device, session length.
+[[ -f "$REPO_ROOT/sim/scenarios/$map.yaml" ]] || die "no scenario sim/scenarios/$map.yaml"
+# This session's copy of the scenario: driven or scripted device, session
+# length, and the overrides above.
 scenario="$logdir/scenario.yaml"
-python3 - "$REPO_ROOT/sim/scenarios/map_$seed.yaml" "$scenario" "$play" "${DURATION:-150}" <<'EOF'
+python3 - "$REPO_ROOT/sim/scenarios/$map.yaml" "$scenario" "$play" "${DURATION:-150}" \
+  "${ALTITUDE:-}" "${NAV_BIAS:-}" "${THERMAL:-0}" <<'EOF'
 import sys, yaml
 src, dst, play, duration = sys.argv[1], sys.argv[2], sys.argv[3] == "1", float(sys.argv[4])
+altitude, nav_bias, thermal = sys.argv[5], sys.argv[6], sys.argv[7] == "1"
 sc = yaml.safe_load(open(src))
 sc["world_file"] = str((__import__("pathlib").Path(src).parents[2] / sc["world_file"]).resolve())
 sc["device"]["control"] = "teleop" if play else "scripted"
 sc["planner"]["duration_s"] = 0.0 if play else duration
+if altitude:
+    for k, a in enumerate(sc["agents"]):
+        a["altitude_m"] = float(altitude) + 2.0 * k
+if nav_bias:
+    h, v = (float(x) for x in nav_bias.split(","))
+    sc["detector"]["nav_bias"] = {"horizontal_sigma_m": h, "vertical_sigma_m": v}
+if thermal and sc["detector"].get("model") == "imaging":
+    wide = sc["detector"]["cameras"]["wide"]
+    sc["detector"]["cameras"]["thermal"] = {"preset": "thermal_640", "mount": "body",
+                                            "pitch_down_deg": wide["pitch_down_deg"]}
 yaml.safe_dump(sc, open(dst, "w"), sort_keys=False)
 EOF
 eval "$(python3 "$REPO_ROOT/scripts/lib/scenario.py" env "$scenario")"
@@ -69,7 +95,7 @@ python3 "$REPO_ROOT/scripts/lib/scenario.py" params "$scenario" "$params" >/dev/
 sim_args=(--scenario "$scenario")
 ((gui)) && sim_args+=(--gui)
 demo_start_sim "$logdir" "${sim_args[@]}"
-log "waiting for the simulator (map $seed)"
+log "waiting for the simulator ($map)"
 demo_wait_for_message /clock rosgraph_msgs/msg/Clock 60
 for n in "${SC_AGENT_IDS[@]}"; do
   demo_wait_for_message "/px4_$n/fmu/out/vehicle_status_v1" px4_msgs/msg/VehicleStatus 120
@@ -80,6 +106,7 @@ demo_wait_for_message "$SC_DEVICE_INFO" sensor_msgs/msg/CameraInfo 60
 ok "ground truth, and the device camera"
 
 agents_start "$params" "$logdir"
+gimbal_start "$params" "$logdir"
 mkdir -p "$logdir/frames"
 truth_ghost=true
 ((play)) && truth_ghost=false   # a played session shows only what the device knows
@@ -103,6 +130,7 @@ fi
 
 extra_topics=(/device/overlay/truth /device/status)
 for n in "${SC_AGENT_IDS[@]}"; do extra_topics+=("/agent_$n/status" "/agent_$n/goal"); done
+((${SC_ZOOM:-0})) && extra_topics+=("/agent_$SC_ZOOM/gimbal/state" "/agent_$SC_ZOOM/gimbal/command")
 # shellcheck disable=SC2046
 demo_start_bag "$logdir/coop_bag" $(stack_record_topics /device/tracks) "${extra_topics[@]}"
 demo_wait_for_message /device/tracks coop_msgs/msg/TrackArray 10
@@ -137,9 +165,9 @@ log "scoring the session"
 set +e
 check=(--check)
 ((play)) && check=()
-python3 "$REPO_ROOT/scripts/eval_phase3.py" "$logdir" "${check[@]}" | tee "$logdir/results.txt"
+python3 "$REPO_ROOT/scripts/${DEMO_EVAL:-eval_phase3.py}" "$logdir" "${check[@]}" | tee "$logdir/results.txt"
 eval_rc=${PIPESTATUS[0]}
 set -e
 if ((flight_rc != 0)); then die "an agent did not complete its session"; fi
 if ((eval_rc != 0)); then die "session missed its acceptance thresholds"; fi
-ok "Phase 3 session complete: $logdir"
+ok "session complete: $logdir"

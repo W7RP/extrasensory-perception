@@ -218,6 +218,17 @@ device_body_start() {
     -r __ns:=/device --params-file "$1/device_controller.yaml"
 }
 
+# gimbal_start <params_dir> <logdir>: the zoom-camera gimbal of the agent
+# that has one (SC_ZOOM), and in simulation the rendered camera it points.
+gimbal_start() {
+  local params="$1" dir="$2" n="${SC_ZOOM:-0}"
+  ((n)) || return 0
+  demo_start_node "$dir/gimbal_$n.log" agent_offboard gimbal_controller --ros-args \
+    -r __ns:="/agent_$n" --params-file "$params/gimbal_$n.yaml"
+  demo_start_node "$dir/gimbal_sim_$n.log" synthetic_detector gimbal_sim --ros-args \
+    -r __ns:="/agent_$n" --params-file "$params/gimbal_sim_$n.yaml"
+}
+
 # planner_start <params_dir> <logdir> [args...]: the overwatch planner.
 planner_start() {
   local params="$1" dir="$2"

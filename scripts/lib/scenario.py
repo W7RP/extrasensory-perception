@@ -92,7 +92,8 @@ def params(sc, out_dir):
             # Phase 3: fly wherever the overwatch planner says.
             offboard.update({"route_source": "goal", "origin_world_enu": [float(v) for v in a["spawn"][:3]],
                              "max_yaw_rate_dps": 60.0, "acceptance_radius_m": 0.8,
-                             "acceptance_speed_mps": 0.6, "vertical_speed_mps": 2.0})
+                             "acceptance_speed_mps": 0.6,
+                             "vertical_speed_mps": float(a.get("vertical_speed_mps", 2.0))})
         else:
             offboard["route_nea"] = route_nea
         write_yaml(out / f"offboard_{n}.yaml", f"/agent_{n}/offboard", offboard)
@@ -100,7 +101,7 @@ def params(sc, out_dir):
             "use_sim_time": True,
             "px4_namespace": f"/px4_{n}",
         })
-        write_yaml(out / f"detector_{n}.yaml", f"/agent_{n}/detector", {
+        detector = {
             "use_sim_time": True,
             "agent_id": n,
             "agent_frame": f"agent_{n}",
@@ -115,7 +116,37 @@ def params(sc, out_dir):
             "exclude_models": entity_models(sc),
             **{f"camera.{k}": float(v) for k, v in det["camera"].items()},
             **{f"noise.{k}": float(v) for k, v in det["noise"].items()},
-        })
+            **{f"nav_bias.{k}": float(v) for k, v in det.get("nav_bias", {}).items()},
+        }
+        if det.get("model") == "imaging":
+            # Phase 4: cameras from sensor specs (synthetic_detector/imaging.hpp).
+            detector["model"] = "imaging"
+            detector["entity_size_m"] = [float(v) for v in det["entity_size_m"]]
+            detector["camera_names"] = list(det["cameras"])
+            for cname, c in det["cameras"].items():
+                detector[f"cameras.{cname}.preset"] = c["preset"]
+                detector[f"cameras.{cname}.mount"] = c.get("mount", "body")
+                detector[f"cameras.{cname}.pitch_down_deg"] = float(c.get("pitch_down_deg", 60.0))
+        write_yaml(out / f"detector_{n}.yaml", f"/agent_{n}/detector", detector)
+        g = sc.get("gimbal")
+        if g and g["agent"] == n:
+            # The agent's gimbal (agent_offboard) and, in simulation, the
+            # rendered zoom camera it points (synthetic_detector gimbal_sim).
+            write_yaml(out / f"gimbal_{n}.yaml", f"/agent_{n}/gimbal", {
+                "use_sim_time": True,
+                "agent_id": n,
+                "px4_namespace": f"/px4_{n}",
+                "origin_world_enu": [float(v) for v in a["spawn"][:3]],
+                "hfov_deg": float(g["hfov_deg"]),
+                "vfov_deg": float(g["vfov_deg"]),
+                "slew_rate_dps": float(g["slew_rate_dps"]),
+            })
+            write_yaml(out / f"gimbal_sim_{n}.yaml", f"/agent_{n}/gimbal_sim", {
+                "use_sim_time": True,
+                "world": sc["world"],
+                "model": g["model"],
+                "agent_frame": f"agent_{n}",
+            })
     base = {
         "use_sim_time": True,
         "associator": fus["associator"],
@@ -169,6 +200,7 @@ def params(sc, out_dir):
             "hysteresis": float(pl["hysteresis"]),
             "rate_hz": float(pl["rate_hz"]),
             "duration_s": float(pl.get("duration_s", 0.0)),
+            "zoom.agent": int(pl.get("zoom_agent", 0)),
             "bounds_xy": [float(v) for v in sc["bounds_xy"]],
             "world_file": world_file(sc),
             "model_paths": [str(REPO_ROOT / "sim" / "models")],
@@ -194,6 +226,10 @@ def params(sc, out_dir):
             "bounds_xy": bounds,
             "device_hfov_deg": float(d["camera"].get("hfov_deg", 70.0)),
             "device_camera_height_m": float(d["camera"]["mount_xyz"][2]),
+            "zoom_agent": int(sc["gimbal"]["agent"]) if "gimbal" in sc else 0,
+            # Fog of war is recomputed 4 times a second: coarser cells on big maps.
+            "fog_cell_m": 1.0 if bounds[1] - bounds[0] <= 70 else 1.5,
+            "zoom_image_topic": sc["gimbal"]["image_topic"] if "gimbal" in sc else "",
             "world_file": world_file(sc),
             "model_paths": [str(REPO_ROOT / "sim" / "models")],
             "exclude_models": entity_models(sc),
@@ -218,6 +254,10 @@ def env(sc):
     print(f"SC_PLANNER={1 if 'planner' in sc else 0}")
     d = sc.get("device")
     print(f"SC_DEVICE={1 if d else 0}")
+    g = sc.get("gimbal")
+    print(f"SC_ZOOM={g['agent'] if g else 0}")
+    if g:
+        print(f"SC_ZOOM_IMAGE={g['image_topic']}")
     if d:
         print(f"SC_DEVICE_IMAGE={d['camera']['image_topic']}")
         print(f"SC_DEVICE_INFO={d['camera']['info_topic']}")

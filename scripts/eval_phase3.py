@@ -215,7 +215,7 @@ def pick_frames(frames_dir, rows):
     return out
 
 
-def plot(logdir, gt, bag, agents, occ_file, exclude, picks, entities):
+def plot(logdir, gt, bag, agents, occ_file, exclude, picks, entities, name="phase3"):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -256,7 +256,7 @@ def plot(logdir, gt, bag, agents, occ_file, exclude, picks, entities):
     ax.legend(fontsize=7, loc="upper right")
     ax.set_title("Session from above: map, entities, device and agents (truth)")
     fig.tight_layout()
-    fig.savefig(logdir / "phase3.png", dpi=110)
+    fig.savefig(logdir / f"{name}.png", dpi=110)
     plt.close(fig)
     if picks:
         fig, axs = plt.subplots(1, len(picks), figsize=(8 * len(picks), 6.2))
@@ -265,9 +265,9 @@ def plot(logdir, gt, bag, agents, occ_file, exclude, picks, entities):
             a.set_title(f"{title}, t={t:.1f} s", fontsize=11)
             a.axis("off")
         fig.tight_layout()
-        fig.savefig(logdir / "phase3_frames.png", dpi=100)
+        fig.savefig(logdir / f"{name}_frames.png", dpi=100)
         plt.close(fig)
-    print(f"plots: {logdir / 'phase3.png'}")
+    print(f"plots: {logdir / (name + '.png')}")
 
 
 def main():
