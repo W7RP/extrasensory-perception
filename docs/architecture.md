@@ -2,6 +2,8 @@
 
 How the pieces fit, what talks to what, and the conventions every node
 follows. Phase-specific design and results are in the phase write-ups.
+Phase 2 adds the ground device; its nodes and topics are listed after the
+Phase 1 diagram.
 
 ## Nodes and topics (Phase 1)
 
@@ -14,7 +16,7 @@ flowchart LR
     XA["MicroXRCEAgent<br/>UDP 8888"]
     GT["ground_truth_bridge"]
     CB["parameter_bridge<br/>/clock"]
-    EM["entity_mover.py"]
+    EM["scene_mover.py"]
   end
   subgraph A1["/agent_1"]
     E1["eskf"]
@@ -66,6 +68,17 @@ detector (to decide what its camera can see) and the evaluation read.
 | `/baseline_agent_<n>/tracks` | coop_msgs/TrackArray | baseline fusion | evaluation | the same tracker fed by agent n only |
 | `/diagnostics` | diagnostic_msgs/DiagnosticArray | eskf, fusion | evaluation | real-time counters, named by node |
 
+## The device (Phase 2)
+
+| node / topic | what |
+|---|---|
+| `device` model in the world | a 640 x 480, 15 Hz camera at 1.6 m, moved by `scene_mover.py` |
+| `/device/camera/image`, `/device/camera/camera_info` | the camera, bridged by the same `parameter_bridge` process as `/clock` |
+| `/device/track_fusion` -> `/device/tracks` | the Phase 1 tracker, run at the device on both agents' detections |
+| `/device/overlay` -> `/device/overlay/image` | the see-through view: every track drawn on the device's image |
+| `/device/overlay/truth` (coop_msgs/OverlayTruth) | per frame, how the overlay matched the truth (evaluation only) |
+| `device` in `/sim/ground_truth` | the device's pose (Phase 2 assumes a well-localised device) |
+
 ## Frames
 
 - **world**: Gazebo's world frame, ENU (x east, y north, z up), metres. Every
@@ -84,9 +97,11 @@ detector (to decide what its camera can see) and the evaluation read.
 Everything runs on simulation time from `/clock`. Stamps mean "when the thing
 happened": a detection carries the time of the ground-truth sample it was made
 from, and a track array carries the time its tracks were predicted to.
-PX4's own timestamps are a different time base (PX4 time plus the uXRCE-DDS
-timesync offset, which steps; see quad-autonomy-sim's Phase 2 write-up), so no
-node here uses them for anything but ordering inside the ESKF. Messages sent
+PX4's own timestamps are raw PX4 time, which in SITL follows the simulation
+clock: this repo turns off uXRCE-DDS timestamp synchronisation
+(`UXRCE_DDS_SYNCT 0`), which otherwise re-maps them to the agent's wall clock
+and corrects that mapping in steps whenever the simulation runs below real
+time (Phase 2 write-up, "Findings"). They are used only inside the ESKF. Messages sent
 *to* PX4 are stamped 0 ("stamp on arrival"), the fix quad-autonomy-sim found
 for offboard setpoints looking stale.
 
@@ -131,6 +146,7 @@ covariance. `VisibilityTruth` is evaluation-only.
 | `agent_estimation` | C++20 | the ESKF (copied from quad-autonomy-sim) and the shared real-time instruments |
 | `synthetic_detector` | C++20 | sensor model (FOV, range, ray-cast occlusion, noise, dropout), detector node, ground-truth bridge |
 | `track_fusion` | C++20 | Kalman filter, associators, tracker, reorder buffer, fusion node |
+| `device_view` | C++20 | the see-through overlay: projection, box, silhouette, ellipse, styles (OpenCV for drawing) |
 
 Each C++ package keeps its logic in a ROS-free library with unit tests, and
 the node is a thin I/O layer around it.

@@ -17,7 +17,16 @@ The project is both halves of that:
   degrades.
 
 Phase 1 built the foundation: two agents, a perfect link, one fused track.
-Nothing below is implemented yet.
+Phase 2 is under way, in four milestones:
+
+| milestone | status |
+|---|---|
+| 1. device, its camera, fusion at the device, box + outline overlay | done ([phase2_device_overlay.md](phase2_device_overlay.md)) |
+| 2. skeleton overlay: animated entity, keypoints measured by the agents | next |
+| 3. registration: estimating each agent's navigation bias | planned |
+| 4. fusion placement: detections at the device vs agent-side tracks | planned |
+
+Everything else below is a plan.
 
 ## Phase 2: the device
 

@@ -60,6 +60,31 @@ Output goes to `logs/phase1_<timestamp>/`:
 | `params/` | the exact parameter file each node ran with |
 | `*.log` | one log per process (PX4 instances, Gazebo, every node) |
 
+## The Phase 2 demo: the device's see-through view
+
+```bash
+./scripts/demo_phase2.sh             # headless, scored
+./scripts/demo_phase2.sh --gui       # Gazebo, and RViz with the device's camera view live
+RECORD_IMU=1 ./scripts/demo_phase2.sh   # also record the agents' raw PX4 IMU streams
+```
+
+Same lifecycle as Phase 1, plus the ground device: it walks west of the
+building and round its south end while the agents fly, fuses their
+detections, and draws every track on its own camera image. Output, in
+`logs/phase2_<timestamp>/`:
+
+| file | what |
+|---|---|
+| `overlay.mp4` | the device's annotated camera view, the whole flight |
+| `frames/` | a PNG still every 2 s of simulation time |
+| `phase2_frames.png` | three typical stills: seen through the wall, predicted, and the device's own view |
+| `phase2.png` | per-frame timeline: hidden or visible to the device, agents seeing, overlay drawn, pixel error |
+| `results.txt`, `metrics.json` | overlay and track metrics against ground truth |
+
+In the image, cyan means "behind the wall, and the agents see it right now",
+green "the device can see it itself", grey dashed "predicted, nobody sees it";
+the dashed magenta box is the true position (simulation only).
+
 ## By hand
 
 Three terminals, each with `source scripts/env.sh`:
@@ -69,6 +94,10 @@ Three terminals, each with `source scripts/env.sh`:
 ./scripts/stack.sh --rviz # 2: ESKFs, detectors, fused + baseline trackers, RViz
 ./scripts/fly.sh          # 3: the entity starts walking, both agents fly their routes
 ```
+
+For Phase 2, use `./scripts/stack.sh --device --rviz` in terminal 2: RViz
+then shows the device's see-through view next to the map (or run
+`ros2 run rqt_image_view rqt_image_view /device/overlay/image`).
 
 `sim.sh` refuses to start if a simulator is already running (a stale one
 silently shares topics with the new one). In RViz, the building is grey, the

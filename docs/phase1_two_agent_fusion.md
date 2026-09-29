@@ -294,3 +294,15 @@ rate), make the ESKF inflate its covariance over IMU gaps instead of only
 counting them, and, on the fusion side, gate per-agent consistency, e.g.
 down-weighting an agent whose detections disagree with the others (the
 registration work in the roadmap).
+
+**Update, found in Phase 2: the cause, and the fix.** The IMU samples were
+never lost. uXRCE-DDS timestamp synchronisation was re-mapping PX4's clock
+(simulation time) to the agent's wall clock, and correcting the mapping in
+steps whenever the simulation ran below real time; the ESKF saw those steps as
+gaps and clock jumps. With the device camera's extra load in Phase 2 it
+happened in every run, which made it measurable (recording the raw IMU stream:
+no sample missing, 169-185 apparent gaps). `UXRCE_DDS_SYNCT 0` keeps PX4's
+stamps on simulation time. The Phase 1 demo re-run with it passed with 0 IMU
+gaps on both agents: fused RMSE while visible 0.39 m (agents alone 0.56 /
+0.44 m), continuity 0.991, 0 ID switches, navigation 0.24 / 0.31 m. Details in
+[phase2_device_overlay.md](phase2_device_overlay.md), "Findings".

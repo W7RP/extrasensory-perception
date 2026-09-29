@@ -55,6 +55,32 @@ allocations in its callbacks.
 The full write-up, with metric definitions and every finding, is
 [docs/phase1_two_agent_fusion.md](docs/phase1_two_agent_fusion.md).
 
+## Phase 2 (in progress): the device sees through the wall
+
+A ground device now walks west of the building, where the building hides the
+entity, and round its south end, where it can see it directly. It fuses what
+the agents send and draws every track on its own camera image, where the
+entity really is: a box and a person outline, cyan when the agents see it
+right now, green when the device could see it anyway, grey and dashed when
+it is only a prediction.
+
+![The device's camera: seen through the wall, predicted, and in its own view](docs/media/phase2_see_through.png)
+
+*The device's camera in one scored run. Left: the entity is behind the
+building, two agents see it, and it is drawn where it is (the dashed magenta
+box is the true position, drawn for checking only). Middle: nobody has seen
+it for 3.4 s, so it is a grey prediction with its uncertainty on the ground.
+Right: the device has walked round the corner, and the overlay sits on the
+real person.*
+
+Over three scored runs, whenever the entity was hidden from the device but
+visible to an agent, it was highlighted in 99 % of the camera frames, 5-10 px
+(median) from where it really was, from data 0.06-0.13 s old. That is the
+baseline Phase 3's degraded link will be measured against. The skeleton
+overlay, registration of the agents' navigation bias, and a comparison of
+where to fuse are the next milestones
+([write-up](docs/phase2_device_overlay.md)).
+
 ## Why it's built this way
 
 - **The detector interface is the real one.** The synthetic detector computes
@@ -112,11 +138,19 @@ and its two PX4 patches and parameter files are reused as-is.
   With perfect navigation the same scenario gives a fused error of 0.22 m,
   half of what it is with the agents' own estimates.
   Estimating each agent's bias from jointly seen entities is on the roadmap.
-  In the worst case it fails a run outright: in 1 of 6 runs a burst of lost
-  IMU samples jumped one agent's estimate by 1 m while it still reported
-  0.24 m of uncertainty, and fusion, trusting that agent, did worse than the
-  other agent alone. The demo fails that run, as it should; the cause and the
-  candidate fixes are in the write-up.
+  The worst case turned out to be a timing bug, not an estimator
+  limitation (next bullet).
+- **The agents' IMU data "had gaps" that weren't there.** In 1 of 6 Phase 1
+  runs, one agent's estimate jumped by a metre while it still claimed 0.24 m
+  of uncertainty, and fusion, trusting it, did worse than the other agent
+  alone. In Phase 2, with a third camera rendering, the gaps showed up in
+  every run, and in one the overlay stood a metre beside the real person. Recording the raw IMU
+  stream showed that no sample was ever missing: uXRCE-DDS was re-mapping
+  PX4's clock, which in simulation is simulation time, onto the wall clock,
+  and correcting the mapping in steps whenever the simulation ran slower
+  than real time. One parameter (`UXRCE_DDS_SYNCT 0`) keeps PX4's stamps on
+  simulation time. The gaps went to zero, and all four scored runs since
+  (three Phase 2, one Phase 1) have passed.
 - **One outlier could steal a track.** A unit test found that a single
   4-sigma detection starts a tentative track whose wide covariance makes the
   next real detections look closer to it than to the established track.
@@ -165,14 +199,15 @@ flowchart LR
 | `agent_estimation` | the ESKF (from quad-autonomy-sim) and the shared real-time instruments |
 | `synthetic_detector` | sensor model, detector node, Gazebo ground-truth bridge |
 | `track_fusion` | Kalman filter, swappable associators, tracker, fusion node |
+| `device_view` | the device's see-through overlay on its camera image |
 
 Nodes, topics, frames and timing are in
 [docs/architecture.md](docs/architecture.md).
 
 ```
 firmware/     PX4 parameters and patches (incl. the multi-vehicle optical-flow fix)
-sim/          Gazebo world, entity model, scenario file, RViz view
-ros2_ws/src/  the five packages above
+sim/          Gazebo world, entity and device models, scenario file, RViz views
+ros2_ws/src/  the six packages above
 scripts/      simulator launcher, demo, evaluation, environment checks
 docs/         architecture, per-phase write-ups, roadmap, environment
 ```
@@ -182,7 +217,7 @@ docs/         architecture, per-phase write-ups, roadmap, environment
 | phase | what it adds | status |
 |---|---|---|
 | 1. Two-agent fusion | two agents, one hidden entity, perfect link, one fused track, scored against ground truth | done, tag `phase1-two-agent-fusion` |
-| 2. The device | a ground node with its own pose, camera and occlusion-aware view, fusing what the agents send and drawing the see-through overlay (box, outline, skeleton) on its camera image | planned |
+| 2. The device | a ground node with its own pose, camera and occlusion-aware view, fusing what the agents send and drawing the see-through overlay (box, outline, skeleton) on its camera image | in progress: device, fusion and box + outline overlay done; skeleton, registration and fusion placement next |
 | 3. The link | bandwidth caps with priority queues, latency, jitter, range- and occlusion-dependent loss, outages; latency and accuracy against link quality are the headline result, with the overlay degrading from skeleton to box as the link gets worse | planned |
 | 4. More agents | more agents and coverage-aware patrol planning | planned |
 
@@ -200,7 +235,12 @@ scores it (`--gui` adds the Gazebo GUI and RViz). It clears any stale
 simulator first, and exits 0 only if both agents completed their routes and
 the fused track met its thresholds. It takes about three and a half minutes.
 
-**Phases 2-4.** Not built yet.
+**Phase 2.** `./scripts/demo_phase2.sh` flies the same mission with the
+ground device and scores its see-through overlay (`--gui` shows the device's
+view live in RViz). The log directory gets `overlay.mp4`, the device's
+annotated camera view for the whole flight, and a still every 2 s.
+
+**Phases 3-4.** Not built yet.
 
 ## License
 
