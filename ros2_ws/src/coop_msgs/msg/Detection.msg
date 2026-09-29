@@ -3,7 +3,7 @@
 # publishes, synthetic or camera-based: a camera detector projects its image
 # box to a world position with its own pose estimate before filling this in.
 #
-# Kept small on purpose (Phase 3 pushes these through a bandwidth-limited link).
+# Kept small on purpose (Phase 4 pushes these through a bandwidth-limited link).
 # Measured CDR size: 44 bytes per detection; a DetectionArray is 24 bytes
 # empty, 68 with one detection (a std_msgs/Header alone would add a string).
 
