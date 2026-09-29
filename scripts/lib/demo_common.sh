@@ -14,7 +14,7 @@ demo_pids=()
 # names to 15 characters (synthetic_detector would never match -x).
 _stale_exact=(px4 MicroXRCEAgent)
 _stale_anchored=('^gz sim' '^[^ ]*parameter_bridge /clock@' '^python3 [^ ]*scene_mover\.py'
-  '^[^ ]*/lib/(agent_estimation|agent_offboard|synthetic_detector|track_fusion|device_view)/'
+  '^[^ ]*/lib/(agent_estimation|agent_offboard|synthetic_detector|track_fusion|device_view|overwatch)/'
   '^/usr/bin/python3 /opt/ros/humble/bin/ros2 bag record .*coop_bag')
 
 _stale_pids() {
@@ -151,10 +151,14 @@ demo_stop_bag() {
 agents_start() {
   local params="$1" dir="$2" n
   for n in "${SC_AGENT_IDS[@]}"; do
-    demo_start_node "$dir/eskf_$n.log" agent_estimation eskf_node --ros-args \
-      -r __ns:="/agent_$n" \
-      --params-file "$(ros2 pkg prefix agent_estimation)/share/agent_estimation/config/eskf.yaml" \
-      --params-file "$params/eskf_$n.yaml"
+    # The ESKF only where the detectors use it (flat-ground scenarios); GPS
+    # agents navigate on PX4's own estimator.
+    if [[ "${SC_POSE_SOURCE:-eskf}" == eskf ]]; then
+      demo_start_node "$dir/eskf_$n.log" agent_estimation eskf_node --ros-args \
+        -r __ns:="/agent_$n" \
+        --params-file "$(ros2 pkg prefix agent_estimation)/share/agent_estimation/config/eskf.yaml" \
+        --params-file "$params/eskf_$n.yaml"
+    fi
     demo_start_node "$dir/detector_$n.log" synthetic_detector synthetic_detector --ros-args \
       -r __ns:="/agent_$n" --params-file "$params/detector_$n.yaml"
   done
@@ -197,12 +201,29 @@ device_start() {
 stack_wait_ready() {
   local n tracks="${1:-/fusion/tracks}"
   for n in "${SC_AGENT_IDS[@]}"; do
-    demo_wait_for_message "/agent_$n/eskf/odometry" nav_msgs/msg/Odometry 60
-    ok "agent $n: ESKF aligned"
+    if [[ "${SC_POSE_SOURCE:-eskf}" == eskf ]]; then
+      demo_wait_for_message "/agent_$n/eskf/odometry" nav_msgs/msg/Odometry 60
+      ok "agent $n: ESKF aligned"
+    fi
     demo_wait_for_message "/agent_$n/detections" coop_msgs/msg/DetectionArray 30
   done
   demo_wait_for_message "$tracks" coop_msgs/msg/TrackArray 30
   ok "perception stack up"
+}
+
+# device_body_start <params_dir> <logdir>: the device controller (drives the
+# device in teleop mode; publishes its pose as /device/status either way).
+device_body_start() {
+  demo_start_node "$2/device_controller.log" device_view device_controller --ros-args \
+    -r __ns:=/device --params-file "$1/device_controller.yaml"
+}
+
+# planner_start <params_dir> <logdir> [args...]: the overwatch planner.
+planner_start() {
+  local params="$1" dir="$2"
+  shift 2
+  demo_start_node "$dir/planner.log" overwatch planner_node --ros-args \
+    --params-file "$params/planner.yaml" "$@"
 }
 
 # The topics the evaluation reads ([tracks_topic], /fusion/tracks by default).
