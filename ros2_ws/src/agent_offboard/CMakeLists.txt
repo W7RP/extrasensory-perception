@@ -24,14 +24,22 @@ add_library(waypoint_follower src/waypoint_follower.cpp)
 target_include_directories(waypoint_follower PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
+add_library(gimbal src/gimbal.cpp)
+target_include_directories(gimbal PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
 
 add_executable(offboard_agent src/offboard_agent_node.cpp)
 target_link_libraries(offboard_agent waypoint_follower)
 ament_target_dependencies(offboard_agent rclcpp px4_msgs coop_msgs)
 
-install(TARGETS waypoint_follower EXPORT export_${PROJECT_NAME}
+add_executable(gimbal_controller src/gimbal_node.cpp)
+target_link_libraries(gimbal_controller gimbal)
+ament_target_dependencies(gimbal_controller rclcpp px4_msgs coop_msgs)
+
+install(TARGETS waypoint_follower gimbal EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
-install(TARGETS offboard_agent DESTINATION lib/${PROJECT_NAME})
+install(TARGETS offboard_agent gimbal_controller DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config DESTINATION share/${PROJECT_NAME})
 
@@ -39,6 +47,8 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_waypoint_follower test/test_waypoint_follower.cpp)
   target_link_libraries(test_waypoint_follower waypoint_follower)
+  ament_add_gtest(test_gimbal test/test_gimbal.cpp)
+  target_link_libraries(test_gimbal gimbal)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
