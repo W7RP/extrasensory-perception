@@ -86,6 +86,9 @@ public:
     const Vec2 & device_xy, std::span<const Vec2> tracks, std::span<const double> altitudes,
     std::span<const Vec3> positions, std::span<const std::optional<Spot>> current) const;
 
+  // True if the device, at its eye height, has a line of sight to `point`.
+  [[nodiscard]] bool device_sees(const Vec2 & device_xy, const Vec3 & point) const noexcept;
+
   [[nodiscard]] const PlannerConfig & config() const noexcept {return cfg_;}
 
 private:

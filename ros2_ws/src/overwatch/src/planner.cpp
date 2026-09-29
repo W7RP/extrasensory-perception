@@ -26,6 +26,12 @@ bool Planner::sees(const Spot & s, const Vec3 & point) const noexcept
   return synthetic_detector::evaluate_visibility(body(s), point, cfg_.camera, occ_).visible();
 }
 
+bool Planner::device_sees(const Vec2 & device_xy, const Vec3 & point) const noexcept
+{
+  return !synthetic_detector::occluded(
+    Vec3(device_xy.x(), device_xy.y(), cfg_.device_eye_height_m), point, occ_);
+}
+
 std::vector<Cell> Planner::hidden_cells(const Vec2 & device_xy, std::span<const Vec2> tracks) const
 {
   std::vector<Cell> cells;

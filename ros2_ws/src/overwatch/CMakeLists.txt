@@ -19,7 +19,7 @@ find_package(std_msgs REQUIRED)
 # Occluders and the visibility model, the same ones the detectors use.
 find_package(synthetic_detector REQUIRED)
 
-add_library(overwatch_planner src/planner.cpp)
+add_library(overwatch_planner src/planner.cpp src/zoom.cpp)
 target_include_directories(overwatch_planner PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
@@ -38,6 +38,8 @@ if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_planner test/test_planner.cpp)
   target_link_libraries(test_planner overwatch_planner)
+  ament_add_gtest(test_zoom test/test_zoom.cpp)
+  target_link_libraries(test_zoom overwatch_planner)
 endif()
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)

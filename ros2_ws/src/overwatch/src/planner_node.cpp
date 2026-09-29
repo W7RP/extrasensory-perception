@@ -5,12 +5,16 @@
 //        /device/tracks        tracks it holds: keep watching those people
 //        /agent_<n>/status     each agent's own position report
 //   out  /agent_<n>/goal       coop_msgs/AgentGoal, every cycle
+//        /agent_<z>/gimbal/command  coop_msgs/GimbalCommand at `zoom.rate_hz`,
+//                              when agent z (`zoom.agent`) carries a zoom
+//                              camera: which track it looks at (zoom.hpp)
 //
 // Everything it uses is what the device and agents report or hold: no ground
 // truth. The map (occluders) is the world file, which the device is assumed to
 // have. The session ends with `land` goals after `duration_s` of planning
 // (0 = never), or when the game view quits (/game/quit).
 
+#include <algorithm>
 #include <chrono>
 #include <map>
 #include <memory>
@@ -23,10 +27,12 @@
 #include <coop_msgs/msg/agent_goal.hpp>
 #include <coop_msgs/msg/agent_status.hpp>
 #include <coop_msgs/msg/device_status.hpp>
+#include <coop_msgs/msg/gimbal_command.hpp>
 #include <coop_msgs/msg/track_array.hpp>
 #include <std_msgs/msg/bool.hpp>
 
 #include "overwatch/planner.hpp"
+#include "overwatch/zoom.hpp"
 #include "synthetic_detector/sdf_occluders.hpp"
 
 namespace overwatch
@@ -88,11 +94,55 @@ public:
     current_.resize(agents_.size());
     timer_ = create_timer(this, get_clock(), rclcpp::Duration::from_seconds(1.0 / rate_hz),
         [this]() {cycle();});
+
+    zoom_agent_ = declare_parameter<int>("zoom.agent", 0);
+    if (zoom_agent_ > 0) {
+      ZoomConfig zc;
+      zc.dwell_s = declare_parameter<double>("zoom.dwell_s", zc.dwell_s);
+      zc.hidden_bonus_s = declare_parameter<double>("zoom.hidden_bonus_s", zc.hidden_bonus_s);
+      zc.coasting_bonus_s = declare_parameter<double>("zoom.coasting_bonus_s", zc.coasting_bonus_s);
+      zoom_ = std::make_unique<ZoomScheduler>(zc);
+      gimbal_pub_ = create_publisher<coop_msgs::msg::GimbalCommand>(
+        "/agent_" + std::to_string(zoom_agent_) + "/gimbal/command", 10);
+      zoom_timer_ = create_timer(this, get_clock(), rclcpp::Duration::from_seconds(
+            1.0 / declare_parameter<double>("zoom.rate_hz", 5.0)), [this]() {zoom_cycle();});
+    }
     RCLCPP_INFO(get_logger(), "overwatch: %zu agents, ring %.0f m around the device, %.0f s",
       agents_.size(), cfg.radius_m, duration_s_);
   }
 
 private:
+  void zoom_cycle()
+  {
+    coop_msgs::msg::GimbalCommand cmd;
+    cmd.stamp = now();
+    cmd.agent = static_cast<std::uint8_t>(zoom_agent_);
+    std::vector<ZoomCandidate> candidates;
+    if (device_ && tracks_ && !land_) {
+      const Vec2 dev(device_->position[0], device_->position[1]);
+      for (const auto & tr : tracks_->tracks) {
+        const Vec3 p(tr.position[0], tr.position[1], tr.position[2]);
+        if (tr.status == coop_msgs::msg::Track::STATUS_TENTATIVE ||
+          (p.head<2>() - dev).norm() > planner_->config().interest_radius_m)
+        {
+          continue;
+        }
+        candidates.push_back({tr.id, p, !planner_->device_sees(dev, p),
+            tr.status == coop_msgs::msg::Track::STATUS_COASTING});
+      }
+    }
+    const auto id = zoom_->choose(cmd.stamp.sec + 1e-9 * cmd.stamp.nanosec, candidates);
+    if (id) {
+      const auto it = std::find_if(candidates.begin(), candidates.end(),
+          [&](const auto & c) {return c.track_id == *id;});
+      cmd.target = {static_cast<float>(it->position.x()), static_cast<float>(it->position.y()),
+        static_cast<float>(it->position.z())};
+      cmd.track_id = *id;
+      cmd.active = true;
+    }
+    gimbal_pub_->publish(cmd);
+  }
+
   void cycle()
   {
     if (!device_) {
@@ -157,6 +207,10 @@ private:
     }
   }
 
+  std::int64_t zoom_agent_{0};
+  std::unique_ptr<ZoomScheduler> zoom_;
+  rclcpp::Publisher<coop_msgs::msg::GimbalCommand>::SharedPtr gimbal_pub_;
+  rclcpp::TimerBase::SharedPtr zoom_timer_;
   std::vector<std::int64_t> agents_;
   std::vector<double> altitudes_;
   double duration_s_{0.0};
