@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>synthetic_detector</name>
+  <version>0.1.0</version>
+  <description>Per-agent synthetic detector (FOV, range, ray-cast occlusion, noise, dropout) publishing the same world-frame detections a camera detector would, plus the simulation ground-truth bridge.</description>
+  <maintainer email="jd.arrobas@proton.me">W7RP</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>eigen</build_depend>
+  <build_export_depend>eigen</build_export_depend>
+  <!-- libsdformat14 / gz-transport13 / gz-msgs10 come with Gazebo Harmonic
+       (Gazebo's apt repository, not rosdep keys). -->
+  <depend>rclcpp</depend>
+  <depend>coop_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2_msgs</depend>
+  <depend>visualization_msgs</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
