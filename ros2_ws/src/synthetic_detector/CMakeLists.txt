@@ -19,6 +19,7 @@ find_package(gz-msgs10 REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(coop_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(px4_msgs REQUIRED)
 find_package(tf2_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 
@@ -31,7 +32,7 @@ target_link_libraries(detector_model PUBLIC Eigen3::Eigen sdformat14::sdformat14
 
 add_executable(synthetic_detector src/detector_node.cpp)
 target_link_libraries(synthetic_detector detector_model)
-ament_target_dependencies(synthetic_detector rclcpp coop_msgs nav_msgs tf2_msgs)
+ament_target_dependencies(synthetic_detector rclcpp coop_msgs nav_msgs px4_msgs tf2_msgs)
 
 # Simulation-only: Gazebo poses into ROS with their names (see the file header).
 add_executable(ground_truth_bridge src/ground_truth_bridge.cpp)

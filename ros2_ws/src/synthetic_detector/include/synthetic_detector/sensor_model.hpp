@@ -85,7 +85,7 @@ struct Measurement
 // Step 1. `entity_world` is the entity's reference point (its centre).
 [[nodiscard]] Visibility evaluate_visibility(
   const Pose & body_true, const Vec3 & entity_world, const CameraConfig & cam,
-  std::span<const Obb> occluders) noexcept;
+  const Occluders & occluders) noexcept;
 
 // Camera-frame noise covariance for an entity at `range_m` along the optical
 // direction `los_cam` (unit vector, camera frame).

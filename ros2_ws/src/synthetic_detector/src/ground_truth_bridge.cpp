@@ -75,14 +75,46 @@ private:
     if (world_file.empty()) {
       return;
     }
-    const OccluderSet occ = load_box_occluders(world_file, model_paths, exclude);
+    const OccluderSet occ = load_occluders(world_file, model_paths, exclude);
     visualization_msgs::msg::MarkerArray arr;
+    std::int32_t id = 0;
+    auto shape = [&](int type, const Vec3 & c, const Quat & q, const Vec3 & scale, float r,
+        float g, float b) {
+        visualization_msgs::msg::Marker m;
+        m.header.frame_id = "world";
+        m.ns = "occluders";
+        m.id = id++;
+        m.type = type;
+        m.pose.position.x = c.x();
+        m.pose.position.y = c.y();
+        m.pose.position.z = c.z();
+        m.pose.orientation.w = q.w();
+        m.pose.orientation.x = q.x();
+        m.pose.orientation.y = q.y();
+        m.pose.orientation.z = q.z();
+        m.scale.x = scale.x();
+        m.scale.y = scale.y();
+        m.scale.z = scale.z();
+        m.color.r = r;
+        m.color.g = g;
+        m.color.b = b;
+        m.color.a = 0.6F;
+        arr.markers.push_back(m);
+      };
+    for (const auto & c : occ.cylinders) {
+      shape(visualization_msgs::msg::Marker::CYLINDER, c.center, c.q,
+        Vec3(2 * c.radius, 2 * c.radius, 2 * c.half_length), 0.45F, 0.3F, 0.2F);
+    }
+    for (const auto & sp : occ.spheres) {
+      shape(visualization_msgs::msg::Marker::SPHERE, sp.center, Quat::Identity(),
+        Vec3::Constant(2 * sp.radius), 0.2F, 0.55F, 0.2F);
+    }
     for (std::size_t i = 0; i < occ.boxes.size(); ++i) {
       const Obb & b = occ.boxes[i];
       visualization_msgs::msg::Marker m;
       m.header.frame_id = "world";
       m.ns = "occluders";
-      m.id = static_cast<std::int32_t>(i);
+      m.id = id++;
       m.type = visualization_msgs::msg::Marker::CUBE;
       m.pose.position.x = b.center.x();
       m.pose.position.y = b.center.y();

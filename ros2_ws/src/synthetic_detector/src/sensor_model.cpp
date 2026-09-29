@@ -27,7 +27,7 @@ Pose camera_pose(const Pose & body_world, const CameraConfig & cam) noexcept
 
 Visibility evaluate_visibility(
   const Pose & body_true, const Vec3 & entity_world, const CameraConfig & cam,
-  std::span<const Obb> occluders) noexcept
+  const Occluders & occluders) noexcept
 {
   Visibility v;
   const Pose c = camera_pose(body_true, cam);
@@ -38,7 +38,7 @@ Visibility evaluate_visibility(
   const double elevation = std::atan2(rel.z(), std::hypot(rel.x(), rel.y()));
   v.in_fov = rel.x() > 0.0 && std::abs(azimuth) <= 0.5 * cam.hfov_rad &&
     std::abs(elevation) <= 0.5 * cam.vfov_rad;
-  v.occluded = first_occluder(c.p, entity_world, occluders).has_value();
+  v.occluded = occluded(c.p, entity_world, occluders);
   return v;
 }
 

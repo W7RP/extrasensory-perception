@@ -6,11 +6,13 @@
 #include <gz/math/Pose3.hh>
 #include <sdf/Box.hh>
 #include <sdf/Collision.hh>
+#include <sdf/Cylinder.hh>
 #include <sdf/Geometry.hh>
 #include <sdf/Link.hh>
 #include <sdf/Model.hh>
 #include <sdf/ParserConfig.hh>
 #include <sdf/Root.hh>
+#include <sdf/Sphere.hh>
 #include <sdf/World.hh>
 
 namespace synthetic_detector
@@ -41,7 +43,7 @@ gz::math::Pose3d resolve(const T & element, const std::string & frame)
 }
 }  // namespace
 
-OccluderSet load_box_occluders(
+OccluderSet load_occluders(
   const std::string & world_file, const std::vector<std::string> & model_paths,
   const std::vector<std::string> & exclude)
 {
@@ -73,18 +75,23 @@ OccluderSet load_box_occluders(
       for (std::size_t c = 0; c < link->CollisionCount(); ++c) {
         const sdf::Collision * col = link->CollisionByIndex(c);
         const std::string name = model->Name() + "/" + link->Name() + "/" + col->Name();
-        const sdf::Box * box = col->Geom()->BoxShape();
-        if (box == nullptr) {
+        const Pose pose = to_pose(world_T_model * resolve(*col, "__model__"));
+        const sdf::Geometry * geom = col->Geom();
+        if (const sdf::Box * box = geom->BoxShape()) {
+          Obb obb;
+          obb.center = pose.p;
+          obb.q = pose.q;
+          const auto size = box->Size();
+          obb.half_extents = 0.5 * Vec3(size.X(), size.Y(), size.Z());
+          set.boxes.push_back(obb);
+        } else if (const sdf::Cylinder * cyl = geom->CylinderShape()) {
+          set.cylinders.push_back({pose.p, pose.q, cyl->Radius(), 0.5 * cyl->Length()});
+        } else if (const sdf::Sphere * sph = geom->SphereShape()) {
+          set.spheres.push_back({pose.p, sph->Radius()});
+        } else {
           set.skipped.push_back(name);  // ground planes, meshes: not occluders here
           continue;
         }
-        const Pose pose = to_pose(world_T_model * resolve(*col, "__model__"));
-        Obb obb;
-        obb.center = pose.p;
-        obb.q = pose.q;
-        const auto size = box->Size();
-        obb.half_extents = 0.5 * Vec3(size.X(), size.Y(), size.Z());
-        set.boxes.push_back(obb);
         set.names.push_back(name);
       }
     }

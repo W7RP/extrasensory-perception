@@ -68,6 +68,33 @@ TEST(Geometry, RotatedBox)
   EXPECT_FALSE(first_occluder({-5, 30, 2}, {5, 30, 2}, boxes).has_value());
 }
 
+TEST(Geometry, CylinderAndSphere)
+{
+  // A 3 m tree trunk (radius 0.3) standing at (5, 0), and its canopy above.
+  Cylinder trunk;
+  trunk.center = Vec3(5, 0, 1.5);
+  trunk.radius = 0.3;
+  trunk.half_length = 1.5;
+  EXPECT_TRUE(segment_intersects({0, 0, 1}, {10, 0, 1}, trunk));      // through it
+  EXPECT_TRUE(segment_intersects({0, 0.25, 1}, {10, 0.25, 1}, trunk)); // grazing inside the radius
+  EXPECT_FALSE(segment_intersects({0, 0.35, 1}, {10, 0.35, 1}, trunk));
+  EXPECT_FALSE(segment_intersects({0, 0, 3.5}, {10, 0, 3.5}, trunk));  // over its top
+  EXPECT_TRUE(segment_intersects({5, 0, 10}, {5, 0, 2}, trunk));       // down its axis, into it
+  EXPECT_FALSE(segment_intersects({0, 0, 1}, {4, 0, 1}, trunk));       // stops short
+  Sphere canopy{{5, 0, 4.5}, 1.5};
+  EXPECT_TRUE(segment_intersects({0, 0, 4.5}, {10, 0, 4.5}, canopy));
+  EXPECT_TRUE(segment_intersects({0, 1.4, 4.5}, {10, 1.4, 4.5}, canopy));
+  EXPECT_FALSE(segment_intersects({0, 1.6, 4.5}, {10, 1.6, 4.5}, canopy));
+  EXPECT_FALSE(segment_intersects({0, 0, 4.5}, {3, 0, 4.5}, canopy));
+  Occluders occ;
+  occ.cylinders.push_back(trunk);
+  occ.spheres.push_back(canopy);
+  EXPECT_TRUE(occluded({0, 0, 1}, {10, 0, 1}, occ));
+  EXPECT_TRUE(occluded({0, 0, 4.5}, {10, 0, 4.5}, occ));
+  EXPECT_FALSE(occluded({0, 5, 1}, {10, 5, 1}, occ));
+  EXPECT_EQ(occ.size(), 2U);
+}
+
 TEST(Camera, MountPitchPointsTheAxisDown)
 {
   CameraConfig c = ideal_camera();
@@ -84,7 +111,8 @@ TEST(Camera, MountPitchPointsTheAxisDown)
 
 TEST(Visibility, FovRangeAndOcclusion)
 {
-  const std::vector<Obb> occ{wall()};
+  Occluders occ;
+  occ.boxes.push_back(wall());
   CameraConfig c = ideal_camera();
   c.hfov_rad = M_PI / 2;
   c.vfov_rad = M_PI / 3;
@@ -224,11 +252,22 @@ TEST(SdfOccluders, StaticBoxesOnlyWithResolvedPoses)
     <geometry><box><size>1 1 1</size></box></geometry></collision></link></model>
   <model name="entity"><static>true</static><link name="l"><collision name="c">
     <geometry><box><size>1 1 1</size></box></geometry></collision></link></model>
+  <model name="tree"><static>true</static><pose>10 0 0 0 0 0</pose><link name="l">
+    <collision name="trunk"><pose>0 0 1.5 0 0 0</pose>
+      <geometry><cylinder><radius>0.3</radius><length>3</length></cylinder></geometry></collision>
+    <collision name="canopy"><pose>0 0 4 0 0 0</pose>
+      <geometry><sphere><radius>1.5</radius></sphere></geometry></collision></link></model>
 </world></sdf>)";
-  const OccluderSet set = load_box_occluders(path, {}, {"entity"});
+  const OccluderSet set = load_occluders(path, {}, {"entity"});
   ASSERT_EQ(set.boxes.size(), 1U);
   EXPECT_EQ(set.names[0], "block/l/c");
   ASSERT_EQ(set.skipped.size(), 1U);  // the plane
+  ASSERT_EQ(set.cylinders.size(), 1U);
+  ASSERT_EQ(set.spheres.size(), 1U);
+  EXPECT_NEAR(set.cylinders[0].center.x(), 10.0, 1e-9);
+  EXPECT_NEAR(set.cylinders[0].half_length, 1.5, 1e-12);
+  EXPECT_NEAR(set.spheres[0].center.z(), 4.0, 1e-9);
+  EXPECT_EQ(set.names.size(), 3U);
   // Link offset 0.5 m along the model's x, which points along world +y.
   EXPECT_NEAR(set.boxes[0].center.x(), 1.0, 1e-6);
   EXPECT_NEAR(set.boxes[0].center.y(), 2.5, 1e-6);
@@ -242,7 +281,7 @@ TEST(SdfOccluders, StaticBoxesOnlyWithResolvedPoses)
 
 TEST(SdfOccluders, ProjectWorldHasTheBuilding)
 {
-  const OccluderSet set = load_box_occluders(COOP_WORLD_FILE, {COOP_MODEL_DIR}, {"entity"});
+  const OccluderSet set = load_occluders(COOP_WORLD_FILE, {COOP_MODEL_DIR}, {"entity"});
   ASSERT_EQ(set.boxes.size(), 1U);
   EXPECT_EQ(set.names[0], "building/link/collision");
   EXPECT_NEAR(set.boxes[0].half_extents.y(), 10.0, 1e-9);
