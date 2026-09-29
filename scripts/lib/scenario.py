@@ -111,6 +111,27 @@ def params(sc, out_dir):
         write_yaml(out / f"baseline_{n}.yaml", f"/baseline_agent_{n}/track_fusion", {**base, "agents": [n]})
     gt_models = [sc["entity"]["model"]] + [gz_model_name(sc, a) for a in sc["agents"]]
     gt_names = ["entity"] + [f"agent_{a['id']}" for a in sc["agents"]]
+    if "device" in sc:
+        d = sc["device"]
+        gt_models.append(d["model"])
+        gt_names.append("device")
+        # Phase 2: the device fuses what the agents send (centralised at the
+        # device), with the same tracker, and draws the see-through overlay.
+        write_yaml(out / "device_fusion.yaml", "/device/track_fusion", {**base, "agents": ids})
+        write_yaml(out / "overlay.yaml", "/device/overlay", {
+            "use_sim_time": True,
+            "image_topic": d["camera"]["image_topic"],
+            "info_topic": d["camera"]["info_topic"],
+            "tracks_topic": "/device/tracks",
+            "device_frame": "device",
+            "entity_frame": "entity",
+            "camera_mount_xyz": [float(v) for v in d["camera"]["mount_xyz"]],
+            "entity_size_m": [float(v) for v in d["entity_size_m"]],
+            "entity_ref_height_m": float(sc["entity"]["ref_height_m"]),
+            "world_file": world_file(sc),
+            "model_paths": [str(REPO_ROOT / "sim" / "models")],
+            "exclude_models": [sc["entity"]["model"]],
+        })
     write_yaml(out / "ground_truth.yaml", "/ground_truth_bridge", {
         "use_sim_time": True, "world": sc["world"], "models": gt_models, "names": gt_names,
         "world_file": world_file(sc), "model_paths": [str(REPO_ROOT / "sim" / "models")],
@@ -127,6 +148,11 @@ def env(sc):
     for a in sc["agents"]:
         x, y, z, yaw = a["spawn"]
         print(f"SC_SPAWN_{a['id']}={x},{y},{z},0,0,{math.radians(yaw):.6f}")
+    d = sc.get("device")
+    print(f"SC_DEVICE={1 if d else 0}")
+    if d:
+        print(f"SC_DEVICE_IMAGE={d['camera']['image_topic']}")
+        print(f"SC_DEVICE_INFO={d['camera']['info_topic']}")
 
 
 # ------------------------------------------------------------------- preview

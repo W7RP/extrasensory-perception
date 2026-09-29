@@ -5,18 +5,22 @@
 #
 #   scripts/stack.sh                       # terminal 2, after scripts/sim.sh
 #   scripts/stack.sh --rviz                # plus RViz (fused tracks, building, truth)
+#   scripts/stack.sh --device --rviz       # Phase 2: the device fuses and draws the
+#                                          # see-through overlay (/device/overlay/image)
 #   POSE_SOURCE=ground_truth scripts/stack.sh   # detectors use perfect navigation
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
 source "$REPO_ROOT/scripts/lib/demo_common.sh"
 
 rviz=0
+device=0
 scenario="$REPO_ROOT/sim/scenarios/two_agent_wall.yaml"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rviz) rviz=1 ;;
+    --device) device=1 ;;
     --scenario) scenario="$(realpath "$2")"; shift ;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
   shift
@@ -41,10 +45,20 @@ if [[ -n "${POSE_SOURCE:-}" ]]; then
 fi
 demo_wait_for_message /sim/ground_truth tf2_msgs/msg/TFMessage 10 \
   || die "no simulator running: start scripts/sim.sh first"
-stack_start "$params" "$COOP_LOG_DIR"
-stack_wait_ready
+if ((device)); then
+  ((SC_DEVICE)) || die "scenario has no device section"
+  agents_start "$params" "$COOP_LOG_DIR"
+  device_start "$params" "$COOP_LOG_DIR"
+  baselines_start "$params" "$COOP_LOG_DIR"
+  stack_wait_ready /device/tracks
+  view=phase2
+else
+  stack_start "$params" "$COOP_LOG_DIR"
+  stack_wait_ready
+  view=phase1
+fi
 if ((rviz)); then
-  "$(ros2 pkg prefix rviz2)/lib/rviz2/rviz2" -d "$REPO_ROOT/sim/rviz/phase1.rviz" \
+  "$(ros2 pkg prefix rviz2)/lib/rviz2/rviz2" -d "$REPO_ROOT/sim/rviz/$view.rviz" \
     --ros-args -p use_sim_time:=true >"$COOP_LOG_DIR/rviz.log" 2>&1 &
   demo_pids+=($!)
 fi

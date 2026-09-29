@@ -19,7 +19,7 @@ eval "$(python3 "$REPO_ROOT/scripts/lib/scenario.py" env "$scenario")"
 params="$COOP_LOG_DIR/params"
 python3 "$REPO_ROOT/scripts/lib/scenario.py" params "$scenario" "$params" >/dev/null
 
-python3 "$REPO_ROOT/scripts/entity_mover.py" --scenario "$scenario" >"$COOP_LOG_DIR/entity_mover.log" 2>&1 &
+python3 "$REPO_ROOT/scripts/scene_mover.py" --scenario "$scenario" >"$COOP_LOG_DIR/scene_mover.log" 2>&1 &
 demo_pids+=($!)
 offboard=()
 for n in "${SC_AGENT_IDS[@]}"; do

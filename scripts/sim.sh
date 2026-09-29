@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Start the simulated world and every agent in a scenario:
 # Micro XRCE-DDS agent + Gazebo (one world) + one PX4 SITL instance per agent,
-# plus the two simulation-side ROS bridges (/clock and /sim/ground_truth).
+# plus the simulation-side ROS bridges (/clock, /sim/ground_truth and, with a
+# ground device in the scenario, its camera).
 #
 #   scripts/sim.sh                         # headless (default)
 #   scripts/sim.sh --gui                   # with the Gazebo GUI
@@ -106,8 +107,15 @@ ok "Gazebo world $SC_WORLD is up"
 
 # Simulation-side ROS bridges. Executables are run directly, not through
 # `ros2 run`, whose wrapper process can leave the node orphaned when killed.
+# One bridge process: /clock always, the device camera when the scenario has
+# a device (/clock stays the first argument: demo_common.sh matches on it).
+bridge_topics=("/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock")
+if ((SC_DEVICE)); then
+  bridge_topics+=("$SC_DEVICE_IMAGE@sensor_msgs/msg/Image[gz.msgs.Image"
+    "$SC_DEVICE_INFO@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo")
+fi
 "$(ros2 pkg prefix ros_gz_bridge)/lib/ros_gz_bridge/parameter_bridge" \
-  "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock" >"$logdir/clock_bridge.log" 2>&1 &
+  "${bridge_topics[@]}" >"$logdir/clock_bridge.log" 2>&1 &
 pids+=($!)
 "$(ros2 pkg prefix synthetic_detector)/lib/synthetic_detector/ground_truth_bridge" \
   --ros-args --params-file "$params_dir/ground_truth.yaml" >"$logdir/ground_truth.log" 2>&1 &

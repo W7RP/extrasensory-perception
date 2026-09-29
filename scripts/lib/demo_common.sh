@@ -13,8 +13,8 @@ demo_pids=()
 # nodes are matched by their install path, because Linux truncates process
 # names to 15 characters (synthetic_detector would never match -x).
 _stale_exact=(px4 MicroXRCEAgent)
-_stale_anchored=('^gz sim' '^[^ ]*parameter_bridge /clock@' '^python3 [^ ]*entity_mover\.py'
-  '^[^ ]*/lib/(agent_estimation|agent_offboard|synthetic_detector|track_fusion)/'
+_stale_anchored=('^gz sim' '^[^ ]*parameter_bridge /clock@' '^python3 [^ ]*scene_mover\.py'
+  '^[^ ]*/lib/(agent_estimation|agent_offboard|synthetic_detector|track_fusion|device_view)/'
   '^/usr/bin/python3 /opt/ros/humble/bin/ros2 bag record .*coop_bag')
 
 _stale_pids() {
@@ -146,10 +146,9 @@ demo_stop_bag() {
 
 # ------------------------------------------------------------ the stack
 
-# stack_start <params_dir> <logdir> [pose_source]
-# Per agent: ESKF (navigation) and detector. Then the fused tracker plus one
-# single-agent baseline tracker per agent, all identical but for their inputs.
-stack_start() {
+# agents_start <params_dir> <logdir>: per agent, its ESKF (navigation) and
+# its detector.
+agents_start() {
   local params="$1" dir="$2" n
   for n in "${SC_AGENT_IDS[@]}"; do
     demo_start_node "$dir/eskf_$n.log" agent_estimation eskf_node --ros-args \
@@ -159,30 +158,57 @@ stack_start() {
     demo_start_node "$dir/detector_$n.log" synthetic_detector synthetic_detector --ros-args \
       -r __ns:="/agent_$n" --params-file "$params/detector_$n.yaml"
   done
-  demo_start_node "$dir/fusion.log" track_fusion fusion_node --ros-args \
-    -r __ns:=/fusion --params-file "$params/fusion.yaml"
+}
+
+# baselines_start <params_dir> <logdir>: one single-agent tracker per agent,
+# identical to the fused one but for its input.
+baselines_start() {
+  local params="$1" dir="$2" n
   for n in "${SC_AGENT_IDS[@]}"; do
     demo_start_node "$dir/baseline_$n.log" track_fusion fusion_node --ros-args \
       -r __ns:="/baseline_agent_$n" --params-file "$params/baseline_$n.yaml"
   done
 }
 
-# stack_wait_ready: every agent's ESKF aligned and detector publishing, fusion up.
+# stack_start <params_dir> <logdir>: the Phase 1 stack. Agents, the fused
+# tracker (/fusion), and the baselines.
+stack_start() {
+  local params="$1" dir="$2"
+  agents_start "$params" "$dir"
+  demo_start_node "$dir/fusion.log" track_fusion fusion_node --ros-args \
+    -r __ns:=/fusion --params-file "$params/fusion.yaml"
+  baselines_start "$params" "$dir"
+}
+
+# device_start <params_dir> <logdir> [overlay args...]: the ground device.
+# It fuses what the agents send (centralised at the device, the Phase 1
+# tracker) and draws the see-through overlay on its camera image.
+device_start() {
+  local params="$1" dir="$2"
+  shift 2
+  demo_start_node "$dir/device_fusion.log" track_fusion fusion_node --ros-args \
+    -r __ns:=/device --params-file "$params/device_fusion.yaml"
+  demo_start_node "$dir/overlay.log" device_view overlay_node --ros-args \
+    -r __ns:=/device --params-file "$params/overlay.yaml" "$@"
+}
+
+# stack_wait_ready [tracks_topic]: every agent's ESKF aligned and detector
+# publishing, and the fused tracker up (/fusion/tracks by default).
 stack_wait_ready() {
-  local n
+  local n tracks="${1:-/fusion/tracks}"
   for n in "${SC_AGENT_IDS[@]}"; do
     demo_wait_for_message "/agent_$n/eskf/odometry" nav_msgs/msg/Odometry 60
     ok "agent $n: ESKF aligned"
     demo_wait_for_message "/agent_$n/detections" coop_msgs/msg/DetectionArray 30
   done
-  demo_wait_for_message /fusion/tracks coop_msgs/msg/TrackArray 30
+  demo_wait_for_message "$tracks" coop_msgs/msg/TrackArray 30
   ok "perception stack up"
 }
 
-# The topics the evaluation reads.
+# The topics the evaluation reads ([tracks_topic], /fusion/tracks by default).
 stack_record_topics() {
   local n
-  echo /sim/ground_truth /fusion/tracks /diagnostics
+  echo /sim/ground_truth "${1:-/fusion/tracks}" /diagnostics
   for n in "${SC_AGENT_IDS[@]}"; do
     echo "/agent_$n/detections" "/agent_$n/visibility_truth" "/agent_$n/eskf/odometry" \
       "/baseline_agent_$n/tracks"

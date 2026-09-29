@@ -83,7 +83,7 @@ demo_start_bag "$logdir/coop_bag" $(stack_record_topics)
 demo_wait_for_message /fusion/tracks coop_msgs/msg/TrackArray 10  # recorder subscribed meanwhile
 
 # 6. The mission: the entity starts walking, both agents fly their routes.
-python3 "$REPO_ROOT/scripts/entity_mover.py" --scenario "$scenario" >"$logdir/entity_mover.log" 2>&1 &
+python3 "$REPO_ROOT/scripts/scene_mover.py" --scenario "$scenario" >"$logdir/scene_mover.log" 2>&1 &
 demo_pids+=($!)
 offboard_pids=()
 for n in "${SC_AGENT_IDS[@]}"; do

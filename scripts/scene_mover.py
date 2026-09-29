@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Walk the entity of interest along the scenario's path, in simulation time.
+"""Move the scenario's kinematic models in simulation time: the entity and,
+if the scenario has one, the ground device.
 
-Scenario orchestration, not perception: it plays the part of the world. The
-entity walks back and forth (ping-pong) along `entity.path` at
-`entity.speed_mps`, facing its direction of travel, starting when this script
-starts. Position is a pure function of simulation time since the start, so a
-slow simulation just walks it slower in wall time, never differently.
+Scenario orchestration, not perception: it plays the part of the world.
+  entity  walks back and forth (ping-pong) along `entity.path` at
+          `entity.speed_mps`, facing its direction of travel;
+  device  walks back and forth along `device.path` at `device.speed_mps`,
+          its camera always facing `device.look_at`.
+Both start when this script starts. Positions are pure functions of
+simulation time since the start, so a slow simulation just moves them slower
+in wall time, never differently.
 
-It moves the (static, kinematic) Gazebo model with an in-process gz-transport
-set_pose request at 20 Hz of simulation time: under 1 ms per call, measured,
+It moves the (static, kinematic) Gazebo models with in-process gz-transport
+set_pose requests at 20 Hz of simulation time: under 1 ms per call, measured,
 where the `gz service` CLI takes ~1 s to start (quad-autonomy-sim, Phase 4).
-Detectors never see this script's numbers: they read the pose back from
-Gazebo like everything else (ground_truth_bridge).
+Nothing downstream sees this script's numbers: everything reads the poses
+back from Gazebo (ground_truth_bridge).
 """
 import argparse
 import math
@@ -49,13 +53,17 @@ def pingpong(points, speed, t):
     return points[-1][0], points[-1][1], 0.0
 
 
-class EntityMover(Node):
+class SceneMover(Node):
     def __init__(self, sc, rate_hz):
-        super().__init__("entity_mover", parameter_overrides=[Parameter("use_sim_time", value=True)])
+        super().__init__("scene_mover", parameter_overrides=[Parameter("use_sim_time", value=True)])
         self.world = sc["world"]
-        self.model = sc["entity"]["model"]
-        self.path = [tuple(p) for p in sc["entity"]["path"]]
-        self.speed = float(sc["entity"]["speed_mps"])
+        # (model, path, speed, look_at or None)
+        self.movers = [(sc["entity"]["model"], [tuple(p) for p in sc["entity"]["path"]],
+                        float(sc["entity"]["speed_mps"]), None)]
+        if "device" in sc:
+            d = sc["device"]
+            self.movers.append((d["model"], [tuple(p) for p in d["path"]], float(d["speed_mps"]),
+                                tuple(d["look_at"])))
         self.gz = GzNode()
         self.t0 = None
         self.failures = 0
@@ -67,17 +75,21 @@ class EntityMover(Node):
             return  # no /clock yet
         if self.t0 is None:
             self.t0 = now
-            self.get_logger().info(f"walking {self.model} along {self.path} at {self.speed} m/s")
-        x, y, heading = pingpong(self.path, self.speed, now - self.t0)
-        req = Pose()
-        req.name = self.model
-        req.position.x, req.position.y, req.position.z = x, y, 0.0
-        req.orientation.z, req.orientation.w = math.sin(heading / 2), math.cos(heading / 2)
-        ok, rep = self.gz.request(f"/world/{self.world}/set_pose", req, Pose, Boolean, 1000)
-        if not (ok and rep.data):
-            self.failures += 1
-            if self.failures % 20 == 1:
-                self.get_logger().warn(f"set_pose failed ({self.failures} so far)")
+            for model, path, speed, _ in self.movers:
+                self.get_logger().info(f"moving {model} along {path} at {speed} m/s")
+        for model, path, speed, look_at in self.movers:
+            x, y, heading = pingpong(path, speed, now - self.t0)
+            if look_at is not None:
+                heading = math.atan2(look_at[1] - y, look_at[0] - x)
+            req = Pose()
+            req.name = model
+            req.position.x, req.position.y, req.position.z = x, y, 0.0
+            req.orientation.z, req.orientation.w = math.sin(heading / 2), math.cos(heading / 2)
+            ok, rep = self.gz.request(f"/world/{self.world}/set_pose", req, Pose, Boolean, 1000)
+            if not (ok and rep.data):
+                self.failures += 1
+                if self.failures % 20 == 1:
+                    self.get_logger().warn(f"set_pose {model} failed ({self.failures} so far)")
 
 
 def main():
@@ -86,7 +98,7 @@ def main():
     ap.add_argument("--rate-hz", type=float, default=20.0)
     a = ap.parse_args()
     rclpy.init()
-    node = EntityMover(scn.load(a.scenario), a.rate_hz)
+    node = SceneMover(scn.load(a.scenario), a.rate_hz)
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
