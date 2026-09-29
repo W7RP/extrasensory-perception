@@ -1,11 +1,16 @@
 # coop-perception-sim
 
-Cooperative perception in simulation. Several airborne agents watch a scene,
-detect an entity of interest on board, and share compact results with a
-mobile device on the ground. The device fuses them, so it can "see" an
-entity that is hidden from where it stands but visible to at least one agent.
-The question the project is building towards: how fast, and how accurately,
-does that picture reach the device as the link between them degrades?
+A ground device that can see through walls, because agents in the air see for
+it. Several airborne agents watch a scene, detect entities of interest on
+board, and send compact results to a device on the ground as fast as they
+can. The device fuses them and highlights, on its own camera view, an entity
+that is hidden from where it stands: a box, an outline, or a skeleton drawn
+over the wall where the entity really is, like an "ESP" view in a game but
+built from real sensor data.
+
+The project is both halves of that: the see-through overlay itself, and a
+measurement of how fast and how accurately it follows the real entity as the
+link between the agents and the device degrades.
 
 Everything runs on the same stack a real vehicle would: **PX4** SITL for
 flight control, **Gazebo Harmonic** for physics and sensors, and **ROS 2**
@@ -143,7 +148,7 @@ flowchart LR
     OFF["offboard<br/>scripted route"]
   end
   FUS["track_fusion<br/>fused + per-agent baselines"]
-  DEV["device<br/>(Phase 2)"]
+  DEV["device + see-through overlay<br/>(Phase 2)"]
   GZ <--> PX
   PX -- "IMU, flow, range, mag" --> ESKF
   ESKF -- "pose + covariance" --> DET
@@ -177,8 +182,8 @@ docs/         architecture, per-phase write-ups, roadmap, environment
 | phase | what it adds | status |
 |---|---|---|
 | 1. Two-agent fusion | two agents, one hidden entity, perfect link, one fused track, scored against ground truth | done, tag `phase1-two-agent-fusion` |
-| 2. The device | a ground node with its own pose and its own occlusion-aware view, fusing what the agents send | planned |
-| 3. The link | bandwidth caps with priority queues, latency, jitter, range- and occlusion-dependent loss, outages; latency and accuracy against link quality are the headline result | planned |
+| 2. The device | a ground node with its own pose, camera and occlusion-aware view, fusing what the agents send and drawing the see-through overlay (box, outline, skeleton) on its camera image | planned |
+| 3. The link | bandwidth caps with priority queues, latency, jitter, range- and occlusion-dependent loss, outages; latency and accuracy against link quality are the headline result, with the overlay degrading from skeleton to box as the link gets worse | planned |
 | 4. More agents | more agents and coverage-aware patrol planning | planned |
 
 The plan for each is in [docs/roadmap.md](docs/roadmap.md).
