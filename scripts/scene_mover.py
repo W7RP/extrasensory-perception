@@ -3,8 +3,9 @@
 if the scenario has one, the ground device.
 
 Scenario orchestration, not perception: it plays the part of the world.
-  entity  walks back and forth (ping-pong) along `entity.path` at
-          `entity.speed_mps`, facing its direction of travel;
+  entities  each walks its `path` at its `speed_mps`, facing its direction of
+            travel: back and forth (`mode: pingpong`, the default) or round a
+            closed loop (`mode: loop`);
   device  walks back and forth along `device.path` at `device.speed_mps`,
           its camera always facing `device.look_at`.
 Both start when this script starts. Positions are pure functions of
@@ -34,6 +35,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 import scenario as scn  # noqa: E402
 
 
+def walk(points, speed, t, mode="pingpong"):
+    """(x, y, heading) after t seconds on the path: back and forth, or round a loop."""
+    if mode == "loop":
+        return loop(points, speed, t)
+    return pingpong(points, speed, t)
+
+
+def loop(points, speed, t):
+    closed = list(points) + [points[0]]
+    segs = list(zip(closed, closed[1:]))
+    lens = [math.dist(p, q) for p, q in segs]
+    s = (t * speed) % sum(lens)
+    for (p, q), L in zip(segs, lens):
+        if s <= L and L > 0:
+            f = s / L
+            return p[0] + f * (q[0] - p[0]), p[1] + f * (q[1] - p[1]), math.atan2(q[1] - p[1], q[0] - p[0])
+        s -= L
+    return points[0][0], points[0][1], 0.0
+
+
 def pingpong(points, speed, t):
     """(x, y, heading) after t seconds walking the polyline back and forth."""
     segs = list(zip(points, points[1:]))
@@ -57,13 +78,16 @@ class SceneMover(Node):
     def __init__(self, sc, rate_hz):
         super().__init__("scene_mover", parameter_overrides=[Parameter("use_sim_time", value=True)])
         self.world = sc["world"]
-        # (model, path, speed, look_at or None)
-        self.movers = [(sc["entity"]["model"], [tuple(p) for p in sc["entity"]["path"]],
-                        float(sc["entity"]["speed_mps"]), None)]
-        if "device" in sc:
+        # (model, path, speed, look_at or None, mode)
+        self.movers = [(e["model"], [tuple(p) for p in e["path"]], float(e["speed_mps"]), None,
+                        e.get("mode", "pingpong")) for e in sc["entities"]]
+        # The device is moved here only on a scripted route; when it is driven
+        # (`device.control: teleop`), device_controller moves it.
+        if "device" in sc and sc["device"].get("control", "scripted") == "scripted":
             d = sc["device"]
+            look_at = tuple(d["look_at"]) if d.get("look_at") else None  # None: face the way it walks
             self.movers.append((d["model"], [tuple(p) for p in d["path"]], float(d["speed_mps"]),
-                                tuple(d["look_at"])))
+                                look_at, d.get("mode", "pingpong")))
         self.gz = GzNode()
         self.t0 = None
         self.failures = 0
@@ -75,10 +99,10 @@ class SceneMover(Node):
             return  # no /clock yet
         if self.t0 is None:
             self.t0 = now
-            for model, path, speed, _ in self.movers:
+            for model, path, speed, _, _ in self.movers:
                 self.get_logger().info(f"moving {model} along {path} at {speed} m/s")
-        for model, path, speed, look_at in self.movers:
-            x, y, heading = pingpong(path, speed, now - self.t0)
+        for model, path, speed, look_at, mode in self.movers:
+            x, y, heading = walk(path, speed, now - self.t0, mode)
             if look_at is not None:
                 heading = math.atan2(look_at[1] - y, look_at[0] - x)
             req = Pose()

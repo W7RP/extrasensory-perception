@@ -7,13 +7,15 @@ Gazebo Harmonic world, models and scenarios.
 | `worlds/coop_field.sdf` | Phase 1 world: PX4's default physics, magnetic field and geodetic origin, the textured `flow_ground` (optical flow needs texture), one 2 x 20 x 6 m building centred on the origin, and the entity parked behind it. Shadows are off (see below). |
 | `models/entity_person` | the entity of interest: a 1.75 m person-sized shape (cylinder body, sphere head), static and moved kinematically |
 | `models/device` | the ground device (Phase 2): a 640 x 480, 15 Hz, 70 deg camera at 1.6 m on a post, static and moved kinematically |
+| `worlds/map_<seed>.sdf`, `scenarios/map_<seed>.yaml` | generated maps (Phase 3) by `tools/generate_map.py`: coloured buildings, walls, containers, crates and trees, several entities on walking loops, the device's camera at 960 x 720, 30 Hz |
+| `models/grass_ground` | 200 m grass ground (generated texture, tileable every 25 m) for the generated maps |
 | `models/flow_ground` | 200 m textured ground, visual only (from quad-autonomy-sim) |
 | `scenarios/two_agent_wall.yaml` | where everything is: agent spawn poses and routes, the entity's path, detector and fusion settings |
 | `rviz/phase1.rviz` | RViz view: building, true positions (TF), fused and baseline tracks |
 | `rviz/phase2.rviz` | the same map with the device's tracks, plus the device's see-through camera view |
 
 **The world file is the occlusion model.** The synthetic detector reads every
-box collision of every static model from `coop_field.sdf` (libsdformat, with
+box, cylinder and sphere collision of every static model from `coop_field.sdf` (libsdformat, with
 poses resolved) and ray-casts against those boxes. Moving or resizing the
 building here changes occlusion everywhere; nothing is duplicated.
 

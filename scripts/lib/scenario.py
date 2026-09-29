@@ -30,7 +30,23 @@ def load(path):
     with open(path) as f:
         sc = yaml.safe_load(f)
     sc["_path"] = str(Path(path).resolve())
+    # Scenarios list several entities under `entities`; Phase 1/2 ones have a
+    # single `entity`, which becomes a one-element list named after its model.
+    if "entities" not in sc:
+        sc["entities"] = [dict(sc["entity"], name=sc["entity"]["model"])]
+    for e in sc["entities"]:
+        e.setdefault("name", e["model"])
+        e.setdefault("mode", "pingpong")
+    sc.setdefault("entity", sc["entities"][0])
     return sc
+
+
+def entity_models(sc):
+    return [e["model"] for e in sc["entities"]]
+
+
+def entity_names(sc):
+    return [e["name"] for e in sc["entities"]]
 
 
 def world_file(sc):
@@ -63,16 +79,23 @@ def params(sc, out_dir):
         x0, y0 = a["spawn"][0], a["spawn"][1]
         # Offboard routes are north/east/altitude relative to the start point.
         route_nea = []
-        for x, y in a["route"]:
+        for x, y in a.get("route", []):
             route_nea += [float(y - y0), float(x - x0), float(a["altitude_m"])]
-        write_yaml(out / f"offboard_{n}.yaml", f"/agent_{n}/offboard", {
+        offboard = {
             "use_sim_time": True,
             "px4_namespace": f"/px4_{n}",
-            "route_nea": route_nea,
             "altitude_m": float(a["altitude_m"]),
             "cruise_speed_mps": float(a["speed_mps"]),
             "yaw_mode": "hold",
-        })
+        }
+        if "planner" in sc:
+            # Phase 3: fly wherever the overwatch planner says.
+            offboard.update({"route_source": "goal", "origin_world_enu": [float(v) for v in a["spawn"][:3]],
+                             "max_yaw_rate_dps": 60.0, "acceptance_radius_m": 0.8,
+                             "acceptance_speed_mps": 0.6, "vertical_speed_mps": 2.0})
+        else:
+            offboard["route_nea"] = route_nea
+        write_yaml(out / f"offboard_{n}.yaml", f"/agent_{n}/offboard", offboard)
         write_yaml(out / f"eskf_{n}.yaml", f"/agent_{n}/eskf", {
             "use_sim_time": True,
             "px4_namespace": f"/px4_{n}",
@@ -81,7 +104,7 @@ def params(sc, out_dir):
             "use_sim_time": True,
             "agent_id": n,
             "agent_frame": f"agent_{n}",
-            "entity_frame": "entity",
+            "entity_frames": entity_names(sc),
             "entity_ref_height_m": float(sc["entity"]["ref_height_m"]),
             "pose_source": det["pose_source"],
             "origin_world_enu": [float(v) for v in a["spawn"][:3]],
@@ -89,7 +112,7 @@ def params(sc, out_dir):
             "seed": 1000 + n,
             "world_file": world_file(sc),
             "model_paths": [str(REPO_ROOT / "sim" / "models")],
-            "exclude_models": [sc["entity"]["model"]],
+            "exclude_models": entity_models(sc),
             **{f"camera.{k}": float(v) for k, v in det["camera"].items()},
             **{f"noise.{k}": float(v) for k, v in det["noise"].items()},
         })
@@ -109,8 +132,8 @@ def params(sc, out_dir):
     write_yaml(out / "fusion.yaml", "/fusion/track_fusion", {**base, "agents": ids})
     for n in ids:
         write_yaml(out / f"baseline_{n}.yaml", f"/baseline_agent_{n}/track_fusion", {**base, "agents": [n]})
-    gt_models = [sc["entity"]["model"]] + [gz_model_name(sc, a) for a in sc["agents"]]
-    gt_names = ["entity"] + [f"agent_{a['id']}" for a in sc["agents"]]
+    gt_models = entity_models(sc) + [gz_model_name(sc, a) for a in sc["agents"]]
+    gt_names = entity_names(sc) + [f"agent_{a['id']}" for a in sc["agents"]]
     if "device" in sc:
         d = sc["device"]
         gt_models.append(d["model"])
@@ -124,18 +147,61 @@ def params(sc, out_dir):
             "info_topic": d["camera"]["info_topic"],
             "tracks_topic": "/device/tracks",
             "device_frame": "device",
-            "entity_frame": "entity",
+            "entity_frames": entity_names(sc),
             "camera_mount_xyz": [float(v) for v in d["camera"]["mount_xyz"]],
             "entity_size_m": [float(v) for v in d["entity_size_m"]],
             "entity_ref_height_m": float(sc["entity"]["ref_height_m"]),
             "world_file": world_file(sc),
             "model_paths": [str(REPO_ROOT / "sim" / "models")],
-            "exclude_models": [sc["entity"]["model"]],
+            "exclude_models": entity_models(sc),
+        })
+    if "planner" in sc:
+        pl = sc["planner"]
+        write_yaml(out / "planner.yaml", "/overwatch_planner", {
+            "use_sim_time": True,
+            "agents": ids,
+            "altitudes_m": [float(a["altitude_m"]) for a in sc["agents"]],
+            "radius_m": float(pl["radius_m"]),
+            "interest_radius_m": float(pl["interest_radius_m"]),
+            "cell_m": float(pl["cell_m"]),
+            "candidates": int(pl["candidates"]),
+            "min_separation_m": float(pl["min_separation_m"]),
+            "hysteresis": float(pl["hysteresis"]),
+            "rate_hz": float(pl["rate_hz"]),
+            "duration_s": float(pl.get("duration_s", 0.0)),
+            "bounds_xy": [float(v) for v in sc["bounds_xy"]],
+            "world_file": world_file(sc),
+            "model_paths": [str(REPO_ROOT / "sim" / "models")],
+            "exclude_models": entity_models(sc),
+            **{f"camera.{k}": float(v) for k, v in det["camera"].items()},
+        })
+    if "device" in sc:
+        d = sc["device"]
+        bounds = [float(v) for v in sc.get("bounds_xy", [-1e9, 1e9, -1e9, 1e9])]
+        write_yaml(out / "device_controller.yaml", "/device/device_controller", {
+            "use_sim_time": True,
+            "mode": "teleop" if d.get("control") == "teleop" else "scripted",
+            "world": sc["world"],
+            "model": d["model"],
+            "bounds_xy": bounds,
+            "world_file": world_file(sc),
+            "model_paths": [str(REPO_ROOT / "sim" / "models")],
+            "exclude_models": entity_models(sc),
+        })
+        write_yaml(out / "game_view.yaml", "/device/game_view", {
+            "use_sim_time": True,
+            "agents": ids,
+            "bounds_xy": bounds,
+            "device_hfov_deg": float(d["camera"].get("hfov_deg", 70.0)),
+            "device_camera_height_m": float(d["camera"]["mount_xyz"][2]),
+            "world_file": world_file(sc),
+            "model_paths": [str(REPO_ROOT / "sim" / "models")],
+            "exclude_models": entity_models(sc),
         })
     write_yaml(out / "ground_truth.yaml", "/ground_truth_bridge", {
         "use_sim_time": True, "world": sc["world"], "models": gt_models, "names": gt_names,
         "world_file": world_file(sc), "model_paths": [str(REPO_ROOT / "sim" / "models")],
-        "exclude_models": [sc["entity"]["model"]]})
+        "exclude_models": entity_models(sc)})
     print(out)
 
 
@@ -148,6 +214,8 @@ def env(sc):
     for a in sc["agents"]:
         x, y, z, yaw = a["spawn"]
         print(f"SC_SPAWN_{a['id']}={x},{y},{z},0,0,{math.radians(yaw):.6f}")
+    print(f"SC_POSE_SOURCE={sc['detector']['pose_source']}")
+    print(f"SC_PLANNER={1 if 'planner' in sc else 0}")
     d = sc.get("device")
     print(f"SC_DEVICE={1 if d else 0}")
     if d:
@@ -233,7 +301,7 @@ def visible(agent_xyz, yaw, target, cam, boxes):
 
 
 def preview(sc, dt=0.5, takeoff_s=8.0):
-    boxes = building_boxes(world_file(sc), [sc["entity"]["model"]])
+    boxes = building_boxes(world_file(sc), entity_models(sc))
     cam = sc["detector"]["camera"]
     ent = sc["entity"]
     agents = sc["agents"]
