@@ -110,6 +110,31 @@ knobs (size, number of buildings, walls, containers, crates, trees, entities
 and agents, the agents' ring radius and camera range, the device camera,
 shadows).
 
+## Phase 4: the overwatch unit
+
+```bash
+./scripts/demo_phase4.sh --play                # play, with one high agent (map 11)
+./scripts/demo_phase4.sh                       # scored, headless
+./scripts/demo_phase4.sh --low                 # the same map with Phase 3's two low agents
+./scripts/demo_phase4.sh --altitude 150        # another altitude [m]
+./scripts/demo_phase4.sh --thermal             # add a thermal camera
+./scripts/demo_phase4.sh --nav-bias 1.5,2.5    # GPS-grade navigation error, 1-sigma horizontal,vertical [m]
+./scripts/compare_phase4.sh                    # the whole comparison: 9 scored sessions, ~1.5 h
+```
+
+The first run generates map 11 (100 x 100 m, 10 people) in both profiles.
+The high agent climbs for about 35 s before it is on station; the game window
+shows the zoom camera's video top right from the start (straight down until
+it has a track to look at). Scored sessions go to
+`logs/phase4_{high,low}_<timestamp>/` with `results.txt`, `metrics.json` and
+`phase4.png`; the comparison to `logs/phase4_compare_<timestamp>/` with
+`comparison.md` and `comparison.png`.
+
+Any generated scenario runs by name with `./scripts/demo_phase3.sh --map
+<name>`; `ALTITUDE`, `NAV_BIAS` and `THERMAL` override it for one session.
+For a high-profile map of your own: `python3 sim/tools/generate_map.py --seed
+N --profile high` (`--altitude`, `--pitch`, `--radius`, `--nav-bias`).
+
 ## By hand
 
 Three terminals, each with `source scripts/env.sh`:

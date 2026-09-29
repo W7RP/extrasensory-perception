@@ -7,7 +7,7 @@ the entity with a synthetic detector (field of view, range, ray-cast
 occlusion, noise, dropout). A C++20 tracker fuses both agents' detections into
 one track, and the same tracker fed by one agent at a time is the baseline.
 Everything is scored against Gazebo's ground truth. The link is perfect;
-degrading it is Phase 4 (first planned as Phase 3; see the roadmap).
+degrading it is Phase 5 (first planned as Phase 3; see the roadmap).
 
 ## Results
 
@@ -160,7 +160,7 @@ see. It is deleted after 10 s without a detection or once its horizontal
 small reorder buffer and releases each once every agent heard from has
 published something at least as new (or it is 0.3 s old). The tracker refuses
 anything older than what it has processed and counts it. On the perfect link
-nothing was ever late; the degraded link (Phase 4) will change that.
+nothing was ever late; the degraded link (Phase 5) will change that.
 
 **Output.** At 10 Hz, every track predicted to the current time, with a mask
 of the agents that contributed in the last 0.5 s, and RViz markers coloured by
@@ -182,7 +182,7 @@ allocates the incoming message, about 7 times per message
 (`ingest_thread_allocations`). The ESKF avoids most of that with pre-allocated
 message pools, but rclcpp only offers those for fixed-size messages, and a
 fixed 16-slot detection array would put every empty slot on the wire, which
-Phase 4's bandwidth budget rules out. WSL2 is not a real-time OS either: the
+Phase 5's bandwidth budget rules out. WSL2 is not a real-time OS either: the
 p99 and max are what this machine delivered, not guarantees.
 
 ## Evaluation
@@ -251,7 +251,7 @@ the deletion limit went from 4 m to 8 m of horizontal sigma (see "Findings").
   flight, so fused positions sit between the agents' biases. Registration
   (estimating each agent's bias from jointly seen entities) is future work.
 - **Perfect link.** Detections reach the fusion node within milliseconds and
-  in order; the reorder buffer and late-batch counters exist for the degraded link (Phase 4).
+  in order; the reorder buffer and late-batch counters exist for the degraded link (Phase 5).
 - **Simulation only.** No hardware, WSL2 timing, lockstep-free Gazebo at
   0.85-0.95x real time.
 

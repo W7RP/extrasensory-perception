@@ -91,6 +91,20 @@ detector (to decide what its camera can see) and the evaluation read.
 | `/agent_<n>/offboard` (`route_source: goal`) | flies the planner's goals |
 | detector `pose_source: px4` | detections placed with PX4's EKF2 odometry (GPS agents) |
 
+## The overwatch unit (Phase 4)
+
+| node / topic | what |
+|---|---|
+| detector `model: imaging` | cameras from sensor specs (`imaging.hpp`): body-mounted, or on the gimbal; detection probability from pixels on target, positions by ground intersection; one detection per entity, from the camera most likely to see it |
+| detector `nav_bias.*` | a constant, seeded navigation error (GPS or RTK grade), with its variance in the covariance |
+| `/agent_<n>/gimbal` (agent_offboard `gimbal_controller`) | points the zoom camera at a world point, slew-rate limited, world-stabilised; runs on the agent |
+| `/agent_<n>/gimbal/command` (coop_msgs/GimbalCommand) | from the planner: which track to look at, 5 Hz |
+| `/agent_<n>/gimbal/state` (coop_msgs/GimbalState) | where it points; read by the detector, the device and `gimbal_sim` |
+| `/agent_<n>/gimbal_sim` (synthetic_detector, simulation only) | moves the rendered `zoomcam_<n>` model to where the gimbal points (gz `set_pose`, 30 Hz) |
+| `/agent_<n>/zoom/image` | the zoom camera's render (1280 x 720, 6 deg, 15 Hz), bridged with `/clock`; the game view's picture-in-picture |
+| `/overwatch_planner` `zoom.agent` | the zoom scheduler (`zoom.hpp`): dwell, then the track most overdue for a look, hidden and coasting ones first |
+| VisibilityTruth `camera`, `pixels`, `p_detect` | per entity and frame, the best camera's view (evaluation only) |
+
 ## Frames
 
 - **world**: Gazebo's world frame, ENU (x east, y north, z up), metres. Every
@@ -134,7 +148,7 @@ The fusion node and the ESKF share one design and one set of instruments
 
 ## Messages (`coop_msgs`)
 
-Small on purpose, because Phase 4 pushes them through a bandwidth-limited
+Small on purpose, because Phase 5 pushes them through a bandwidth-limited
 link model. Measured CDR sizes:
 
 | message | size |
@@ -154,12 +168,12 @@ covariance. `VisibilityTruth` is evaluation-only.
 | package | language | what |
 |---|---|---|
 | `coop_msgs` | msg | the message set above |
-| `agent_offboard` | C++20 | offboard flight node (copied from quad-autonomy-sim) |
+| `agent_offboard` | C++20 | offboard flight node (copied from quad-autonomy-sim), gimbal controller |
 | `agent_estimation` | C++20 | the ESKF (copied from quad-autonomy-sim) and the shared real-time instruments |
-| `synthetic_detector` | C++20 | sensor model (FOV, range, ray-cast occlusion, noise, dropout), detector node, ground-truth bridge |
+| `synthetic_detector` | C++20 | sensor models (range model; imaging model: presets, pixels on target, TTPF, Johnson levels, ground-intersection geolocation, canopy), detector node, ground-truth bridge, gimbal_sim |
 | `track_fusion` | C++20 | Kalman filter, associators, tracker, reorder buffer, fusion node |
 | `device_view` | C++20 | the see-through overlay (projection, box, silhouette, ellipse, styles), the device controller (walker model), the game window (SDL2, minimap, fog of war) |
-| `overwatch` | C++20 | the planner that places the agents around the device (hidden ground, candidate spots, greedy coverage, hysteresis) |
+| `overwatch` | C++20 | the planner that places the agents around the device (hidden ground, candidate spots, greedy coverage, hysteresis), and the zoom scheduler |
 
 Each C++ package keeps its logic in a ROS-free library with unit tests, and
 the node is a thin I/O layer around it.

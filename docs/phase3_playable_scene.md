@@ -237,8 +237,8 @@ What this simulation does and does not claim about the real world is in
 - **The device's pose is exact** (see Phase 2).
 - **The planner optimises the next second only**: no lookahead along your
   path, no memory of where people were last seen beyond the current tracks.
-- **Two agents**, a 60 m map: more agents and larger maps are Phase 5.
-- **Perfect link**: the degraded link is Phase 4.
+- **Two agents**, a 60 m map: one high unit on a larger map is Phase 4, more agents Phase 6.
+- **Perfect link**: the degraded link is Phase 5.
 
 ## Reproduce
 

@@ -32,9 +32,10 @@ behaviour: quad-autonomy-sim's Phase 2 demo was re-run before and after it
 | check | result |
 |---|---|
 | `scripts/check_env.sh` | all checks pass |
-| Clean build (`rm -rf build install log; colcon build`) | 6 packages, 0 compiler warnings (`-Wall -Wextra -Wpedantic -Wshadow -Wconversion`) |
-| Unit tests | 52 gtest cases in 5 test executables, 0 failures |
+| Clean build (`rm -rf build install log; colcon build`) | 8 packages, 0 compiler warnings (`-Wall -Wextra -Wpedantic -Wshadow -Wconversion`); last checked for Phase 4, 2026-09-29 |
+| Unit tests | 98 test results (`colcon test-result --all`), of them 87 gtest cases in 11 executables, 0 failures |
 | Phase 1 demo | see [phase1_two_agent_fusion.md](phase1_two_agent_fusion.md), "Results" |
+| Phase 4 comparison | see [phase4_overwatch_unit.md](phase4_overwatch_unit.md), "Results" |
 
 ## Notes
 

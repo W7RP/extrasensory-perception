@@ -21,12 +21,14 @@ The project is both halves of that:
 | 1. Two-agent fusion | two agents, one hidden entity, perfect link, one fused track | done ([write-up](phase1_two_agent_fusion.md)) |
 | 2. The device | the ground device, its camera and the see-through overlay | milestone 1 of 4 done ([write-up](phase2_device_overlay.md)); milestones 2-4 below |
 | 3. The playable scene | you drive the device on a generated map; agents positioned around you by a planner | done ([write-up](phase3_playable_scene.md)) |
-| 4. The link | the degraded link between agents and device; the headline curves | planned |
-| 5. More agents, harder maps | 3-6 agents, larger and denser maps | planned |
+| 4. The overwatch unit | one high agent with real sensor specs (wide 4K + gimbal zoom) instead of a swarm; compared against the low agents | done ([write-up](phase4_overwatch_unit.md)) |
+| 5. The link | the degraded link between agents and device; the headline curves | planned |
+| 6. More agents, harder maps | several high or mixed agents, larger and denser maps | planned |
 
 Phase 3 was added after Phase 2's first milestone, when the goal became a
-scene you can walk; the link (first planned as Phase 3) and scaling up (first
-Phase 4) moved one place down. Phase 2's remaining milestones:
+scene you can walk, and Phase 4 after Phase 3, when the goal became one unit
+high enough not to need a swarm; the link (first planned as Phase 3) and
+scaling up (first Phase 4) moved down each time. Phase 2's remaining milestones:
 
 | Phase 2 milestone | status |
 |---|---|
@@ -83,7 +85,7 @@ A ground-side node that consumes the picture, with a pose and a view of its own.
   the overlay's error in the image (pixels, and overlap of the drawn box with
   the true one).
 
-## Phase 4: the link (the headline result)
+## Phase 5: the link (the headline result)
 
 A link model node between every agent and the device: messages go in, some
 come out later.
@@ -116,18 +118,21 @@ come out later.
   something you see while playing.
 - **The planner** (Phase 3) gains a link term: an agent that loses its link to
   the device is no use to it, so spots with line of sight to the device weigh
-  more.
+  more. For the high unit (Phase 4) the link is mostly line of sight from
+  100 m, but its zoom video is the first thing that needs real bandwidth: a
+  compressed 720p stream is ~2-4 Mbit/s, against a few kbit/s for tracks.
 
-## Phase 5: more agents, harder maps
+## Phase 6: more agents, harder maps
 
-- **N agents** (3-6): the simulator, parameters, messages and planner are
-  already per-agent; the limits to watch are Gazebo's real-time factor and
-  link contention.
+- **N agents**: several high units over a larger area, or one high unit with
+  low agents that go and look under the canopy it cannot see through. The
+  simulator, parameters, messages and planner are already per-agent; the
+  limits to watch are Gazebo's real-time factor and link contention.
 - **Planning with lookahead**: along the device's likely path, and towards
   where people were last seen, instead of the next second only.
 - **Larger, denser maps**, and people who react (stop, hide, crowd).
 - **Evaluation**: availability, coverage and MOTA against the number of agents,
-  on the Phase 4 link.
+  on the Phase 5 link.
 
 ## Beyond
 

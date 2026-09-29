@@ -67,7 +67,7 @@ How to read it:
   device's user can tell a live highlight from a guess.
 - **Data age on a perfect link is ~0.1 s**, the pipeline's own latency
   (10 Hz detections, 10 Hz track output, 15 Hz camera). That is the baseline
-  Phase 4 will degrade.
+  Phase 5 will degrade.
 
 ## What the device is
 
@@ -91,7 +91,7 @@ it in the same way the agents' navigation error adds to their detections).
 The device runs the Phase 1 tracker, unchanged, on both agents' detections
 (`/device/track_fusion`, output `/device/tracks`). On the perfect link that is
 the same picture Phase 1's `/fusion` produced; the point of moving it is that
-Phase 4's link model will sit between the agents and the device. The
+Phase 5's link model will sit between the agents and the device. The
 single-agent baselines run alongside, as in Phase 1.
 
 ## The overlay
@@ -136,7 +136,7 @@ directory, and `/device/overlay/truth`, one evaluation record per frame.
 track (position, heading, class): it costs nothing on the link and reads as a
 person at any distance. A skeleton has to be *measured* by the agents (body
 keypoints) and sent, about 200 bytes per person per frame; that is
-milestone 2, and in Phase 4 it becomes the first thing a bad link drops.
+milestone 2, and in Phase 5 it becomes the first thing a bad link drops.
 
 ## Evaluation
 

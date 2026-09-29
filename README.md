@@ -90,7 +90,7 @@ real person.*
 Over three scored runs, whenever the entity was hidden from the device but
 visible to an agent, it was highlighted in 99 % of the camera frames, 5-10 px
 (median) from where it really was, from data 0.06-0.13 s old. That is the
-baseline Phase 4's degraded link will be measured against. The skeleton
+baseline Phase 5's degraded link will be measured against. The skeleton
 overlay, registration of the agents' navigation bias, and a comparison of
 where to fuse are the next milestones
 ([write-up](docs/phase2_device_overlay.md)).
@@ -122,6 +122,43 @@ the game uses ground truth: the overlay, the minimap and the planner work
 from the map, the device's own position, the agents' own reports and the
 tracks ([write-up](docs/phase3_playable_scene.md)).
 
+## Phase 4: one high unit instead of a swarm
+
+Phase 3 needed its agents low and close, and two of them still saw only a
+third of what the device could not. Phase 4 asks whether one agent, high
+enough, does the job, with the sensors a commercial inspection drone carries
+rather than a generic camera: a wide 4K search camera looking steeply down,
+and a 30x zoom on a stabilised gimbal that takes a closer look at one person
+at a time (a thermal camera is optional). The detector now models them from
+their specifications: how many pixels land on a person at that range, the
+chance a detector finds them (the Johnson criteria used for imaging
+systems), and where the detection lands when the ray through the pixel is
+intersected with the ground from the drone's own estimated pose. In the game
+the zoom camera's real rendered video is a picture-in-picture.
+
+![Playing the device with one high unit: the zoom camera on a person, the minimap covered](docs/media/phase4_game.png)
+
+*Phase 4, playing the device. The high unit's zoom camera (top right, its
+real render) is on track 6, 101 m away at 0.6 cm per pixel; the person-sized
+box around the reticle is the device's own estimate of scale. On the
+minimap, the blue quadrilateral is the wide camera's footprint from 100 m:
+nearly the whole map, with all nine people tracked (the orange ring is the
+zoom's target). Here the three people in front of you are in your own line
+of sight, so they are drawn green.*
+
+On the same 100 x 100 m map, people and device route, one agent at 100 m
+kept a live track on 96 % of the people-time near the device, against 53 %
+for Phase 3's two low agents. Hidden people could be highlighted 88 % of the
+time instead of 10 %, and it saw most of the rest of the map on the side.
+Walls barely hide anyone from there; tree canopy hides most of what it
+misses, and the thermal camera takes it to 99 %. The 4K camera still
+identifies a person at 150 m; altitude costs accuracy (0.2 m of detection
+error at 60 m, 0.4 m at 250 m) before it costs detection. The honest limit
+is navigation: with a plain-GPS-grade position error (metres) every
+detection lands metres off, and the highlight stands beside the person
+instead of on them. The concept needs RTK-grade positioning, or bias
+estimation, on the air unit ([write-up](docs/phase4_overwatch_unit.md)).
+
 ## Why it's built this way
 
 - **The detector interface is the real one.** The synthetic detector computes
@@ -138,7 +175,7 @@ tracks ([write-up](docs/phase3_playable_scene.md)).
   straight out of the Gazebo world with libsdformat, so what blocks the view
   in the physics is exactly what blocks it in the detector.
 - **Small messages, from day one.** A frame with one detection is 68 bytes on
-  the wire, a track 64. Phase 4 pushes these through a bandwidth-limited link,
+  the wire, a track 64. Phase 5 pushes these through a bandwidth-limited link,
   so the format was designed for that before there was a link.
 - **Real-time discipline, measured.** The fusion node has a dedicated ingest
   thread, fixed-capacity storage, a non-blocking hand-off, and live counters
@@ -236,12 +273,12 @@ flowchart LR
 | package | what |
 |---|---|
 | `coop_msgs` | compact detection and track messages |
-| `agent_offboard` | offboard flight node (from quad-autonomy-sim) |
+| `agent_offboard` | offboard flight node (from quad-autonomy-sim), the zoom camera's gimbal controller |
 | `agent_estimation` | the ESKF (from quad-autonomy-sim) and the shared real-time instruments |
-| `synthetic_detector` | sensor model, detector node, Gazebo ground-truth bridge |
+| `synthetic_detector` | sensor models (range; imaging from real camera specs), detector node, Gazebo ground-truth bridge, simulated gimbal |
 | `track_fusion` | Kalman filter, swappable associators, tracker, fusion node |
 | `device_view` | the device's see-through overlay, its controller, and the game window |
-| `overwatch` | the planner that places the agents around the device |
+| `overwatch` | the planner that places the agents around the device, and schedules the zoom camera |
 
 Nodes, topics, frames and timing are in
 [docs/architecture.md](docs/architecture.md).
@@ -260,9 +297,10 @@ docs/         architecture, per-phase write-ups, roadmap, environment
 |---|---|---|
 | 1. Two-agent fusion | two agents, one hidden entity, perfect link, one fused track, scored against ground truth | done, tag `phase1-two-agent-fusion` |
 | 2. The device | a ground node with its own pose, camera and occlusion-aware view, fusing what the agents send and drawing the see-through overlay (box, outline, skeleton) on its camera image | in progress: device, fusion and box + outline overlay done; skeleton, registration and fusion placement next |
-| 3. The playable scene | generated colourful maps, several people, you drive the device in a game window, agents placed around you by a planner | done |
-| 4. The link | bandwidth caps with priority queues, latency, jitter, range- and occlusion-dependent loss, outages; latency and accuracy against link quality are the headline result, with the overlay degrading from skeleton to box as the link gets worse | planned |
-| 5. More agents, harder maps | 3-6 agents, planning with lookahead, larger and denser maps, people who react | planned |
+| 3. The playable scene | generated colourful maps, several people, you drive the device in a game window, agents placed around you by a planner | done, tag `phase3-playable-scene` |
+| 4. The overwatch unit | one high agent with a wide 4K camera and a gimbal zoom (optional thermal) instead of a swarm; sensors modelled from their specifications; compared with the low agents, swept over altitude | done, tag `phase4-overwatch-unit` |
+| 5. The link | bandwidth caps with priority queues, latency, jitter, range- and occlusion-dependent loss, outages; latency and accuracy against link quality are the headline result, with the overlay degrading from skeleton to box as the link gets worse | planned |
+| 6. More agents, harder maps | several high or mixed agents (a low one to look under the canopy), planning with lookahead, larger and denser maps, people who react | planned |
 
 The plan for each is in [docs/roadmap.md](docs/roadmap.md).
 
@@ -288,7 +326,12 @@ or the right mouse button to turn, Shift to run, Esc to end);
 `./scripts/demo_phase3.sh` for the scored, headless session. `--seed N` picks
 another map, generated on first use.
 
-**Phases 4-5.** Not built yet.
+**Phase 4.** `./scripts/demo_phase4.sh --play` to play with the high unit,
+`./scripts/demo_phase4.sh` for a scored session (`--low`, `--altitude N`,
+`--thermal`, `--nav-bias H,V` for the variants), and
+`./scripts/compare_phase4.sh` for the whole comparison (about 1.5 hours).
+
+**Phases 5-6.** Not built yet.
 
 ## License
 
