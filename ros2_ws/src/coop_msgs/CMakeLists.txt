@@ -11,6 +11,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   msg/Track.msg
   msg/TrackArray.msg
   msg/VisibilityTruth.msg
+  msg/OverlayTruth.msg
   DEPENDENCIES builtin_interfaces)
 
 ament_export_dependencies(rosidl_default_runtime)
