@@ -1,0 +1,41 @@
+# Parameters applied ONLY in SITL (scripts/sim.sh), never on hardware.
+# Each one relaxes a safety check that exists for a real vehicle but has no
+# meaning in an unattended simulation.
+
+# Data-link-loss failsafe off: SITL runs without a ground station, and with
+# NAV_DLL_ACT > 0 PX4 refuses to arm ("Preflight Fail: No connection to the GCS").
+# On hardware keep this enabled and fly with a GCS link.
+NAV_DLL_ACT 0
+
+# Magnetometer: PX4's own simulator (sensor_mag_sim: WMM field at the
+# ground-truth position, rotated by the ground-truth attitude) instead of
+# Gazebo Harmonic's, which is not usable in tilted flight; see
+# firmware/px4_patches/0002-* and quad-autonomy-sim's phase 2 write-up.
+SENS_EN_MAGSIM 1
+
+# Magnetic declination [deg] for flights without GPS (EKF2 cannot look it up).
+# Must equal the WMM value sensor_mag_sim uses at the world origin; measured
+# against ground truth in quad-autonomy-sim's phase 2. On hardware: the
+# site's declination (or let EKF2 derive it from GPS).
+EKF2_MAG_DECL 3.54
+# Declination source. In PX4 v1.17 EKF2 only uses EKF2_MAG_DECL when bit 1
+# (SAVE_GEO_DECL) is set (mag_control.cpp, getMagDeclination); with 0 it uses a
+# declination of 0 regardless of EKF2_MAG_DECL. 2 = use EKF2_MAG_DECL.
+EKF2_DECL_TYPE 2
+
+# The simulated magnetometer has no hard-iron offset, but PX4 saves the mag
+# biases EKF2 "learns" into the calibration at every disarm (SENS_MAG_AUTOCAL).
+# Fed bad data once, that made every later flight worse; keep SITL
+# calibration at zero and fixed.
+SENS_MAG_AUTOCAL 0
+CAL_MAG0_XOFF 0.0
+CAL_MAG0_YOFF 0.0
+CAL_MAG0_ZOFF 0.0
+
+# GPS delay compensation off: PX4's simulated GPS (sensor_gps_sim) stamps each
+# fix with the true sample time and adds no latency, but EKF2 assumed the
+# hardware default of 110 ms and so ran ~0.1 s AHEAD of ground truth (measured
+# against both Gazebo's and PX4's ground truth in quad-autonomy-sim: ~0.15 m at 1.5 m/s,
+# drawn into the map as displaced surfaces). PX4's own SIH airframes set 0 for
+# the same reason. On hardware keep the receiver's real latency (default 110).
+EKF2_GPS_DELAY 0

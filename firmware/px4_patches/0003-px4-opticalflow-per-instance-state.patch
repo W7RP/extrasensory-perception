@@ -1,0 +1,141 @@
+Submodule external/klt_feature_tracker contains modified content
+diff --git a/external/klt_feature_tracker/include/trackFeatures.h b/external/klt_feature_tracker/include/trackFeatures.h
+index ea0c42e..ad47276 100644
+--- a/external/klt_feature_tracker/include/trackFeatures.h
++++ b/external/klt_feature_tracker/include/trackFeatures.h
+@@ -44,6 +44,23 @@
+ #include <cstdio>
+ #include <vector>
+ 
++// What the tracker remembers between frames. One per image stream: this used
++// to be file-level statics, which made every tracker in a process (e.g. two
++// simulated vehicles in one Gazebo server) track features across each other's
++// images.
++struct KltState
++{
++	cv::Mat prev_img;
++	std::vector<cv::Point2f> prev_corners;
++	std::vector<cv::Point2f> prev_corners_right;
++	std::vector<unsigned char> prev_status = std::vector<unsigned char>(100, 0);
++};
++
++void trackFeatures(KltState &state, const cv::Mat &img_l, const cv::Mat &img_r,
++		   std::vector<cv::Point2f> &z_all_l, std::vector<cv::Point2f> &z_all_r,
++		   std::vector<int> &updateVect, int stereo = 0);
++
++// Single-stream convenience: uses one process-wide state.
+ // extracts points on a grid and tracks them over time. img_r can be a empty cv::Mat, in that case no disparity computation is done
+ // output variables are z_all and updateVect that need to point to existing arrays of the correct size (3*sizeof(double)*numPoints for z_all and sizeof(unsigned char)*numPoints for updateVect)
+ // stereo: 0 = never do stereo, 1 = do stereo with new features, 2 = always do stereo
+diff --git a/external/klt_feature_tracker/src/trackFeatures.cpp b/external/klt_feature_tracker/src/trackFeatures.cpp
+index 3e50e6f..6f889b9 100644
+--- a/external/klt_feature_tracker/src/trackFeatures.cpp
++++ b/external/klt_feature_tracker/src/trackFeatures.cpp
+@@ -49,17 +49,13 @@
+ #include <cstdlib>
+ #include <cstring>
+ 
+-// "persistent" local variables
+-static cv::Mat prev_img;
+-static std::vector<cv::Point2f> prev_corners;
+-static std::vector<cv::Point2f> prev_corners_right;
+-static std::vector<unsigned char> prev_status(100, 0);
++// "persistent" state now lives in a KltState (trackFeatures.h), one per stream.
+ 
+ // for throttling debug messages
+ static int debug_msg_count = 0;
+ 
+ // local functions
+-static void initMorePoints(const cv::Mat &img_l, const cv::Mat &img_r, std::vector<int> &updateVect, std::vector<cv::Point2f> &z_all_l,
++static void initMorePoints(KltState &state, const cv::Mat &img_l, const cv::Mat &img_r, std::vector<int> &updateVect, std::vector<cv::Point2f> &z_all_l,
+         std::vector<cv::Point2f> &z_all_r, int stereo);
+ bool stereoMatchOpticalFlow(const cv::Mat &img_l, const cv::Mat &img_r, std::vector<cv::KeyPoint> &keypointsL, std::vector<cv::Point2f> &leftPoints,
+         std::vector<cv::Point2f> &rightPoints);
+@@ -69,6 +65,15 @@ bool compareKeypoints(const cv::KeyPoint &first, const cv::KeyPoint &second);
+ // corners (z_all_l, z_all_r) and status are output variables
+ void trackFeatures(const cv::Mat &img_l, const cv::Mat &img_r, std::vector<cv::Point2f> &features_l, std::vector<cv::Point2f> &features_r, std::vector<int> &status,
+         int stereo) {
++    static KltState process_state;
++    trackFeatures(process_state, img_l, img_r, features_l, features_r, status, stereo);
++}
++
++void trackFeatures(KltState &state, const cv::Mat &img_l, const cv::Mat &img_r, std::vector<cv::Point2f> &features_l, std::vector<cv::Point2f> &features_r, std::vector<int> &status,
++        int stereo) {
++    cv::Mat &prev_img = state.prev_img;
++    std::vector<cv::Point2f> &prev_corners = state.prev_corners;
++    std::vector<unsigned char> &prev_status = state.prev_status;
+     if (!img_l.data)
+         throw "Left image is invalid";
+     if (stereo && !img_r.data)
+@@ -128,13 +133,16 @@ void trackFeatures(const cv::Mat &img_l, const cv::Mat &img_r, std::vector<cv::P
+     img_l.copyTo(prev_img);
+ 
+     // initialize new points if needed
+-    initMorePoints(img_l, img_r, status, features_l, features_r, stereo);
++    initMorePoints(state, img_l, img_r, status, features_l, features_r, stereo);
+ }
+ 
+ // ==== local functions, hidden from outside this file ====
+ 
+-static void initMorePoints(const cv::Mat &img_l, const cv::Mat &img_r, std::vector<int> &updateVect, std::vector<cv::Point2f> &z_all_l,
++static void initMorePoints(KltState &state, const cv::Mat &img_l, const cv::Mat &img_r, std::vector<int> &updateVect, std::vector<cv::Point2f> &z_all_l,
+         std::vector<cv::Point2f> &z_all_r, int stereo) {
++    std::vector<cv::Point2f> &prev_corners = state.prev_corners;
++    std::vector<cv::Point2f> &prev_corners_right = state.prev_corners_right;
++    std::vector<unsigned char> &prev_status = state.prev_status;
+     if (!img_l.data)
+         throw "Left image is invalid";
+     if (stereo && !img_r.data)
+diff --git a/include/flow_opencv.hpp b/include/flow_opencv.hpp
+index df33915..7b4c51c 100644
+--- a/include/flow_opencv.hpp
++++ b/include/flow_opencv.hpp
+@@ -62,6 +62,7 @@ private:
+ 	//general
+ 	std::vector<int> updateVector;
+ 	std::vector<cv::Point2f> features_current, features_previous, features_tmp, useless;
++	KltState klt_state;  // this sensor's own tracker memory
+ 	bool set_camera_matrix;
+ 	bool set_camera_distortion;
+ 
+diff --git a/include/optical_flow.hpp b/include/optical_flow.hpp
+index cd65ceb..dc02782 100644
+--- a/include/optical_flow.hpp
++++ b/include/optical_flow.hpp
+@@ -60,6 +60,10 @@ protected:
+ 	float sum_flow_y;
+ 	int sum_flow_quality;
+ 	int valid_frame_count;
++	// Per instance: a function-local static here was shared by every flow
++	// sensor in the process, so two simulated vehicles corrupted each other's
++	// integration time.
++	uint32_t time_last_pub{0};
+ 
+ 	void initLimitRate();
+ 	int limitRate(int flow_quality, const uint32_t frame_time_us, int *dt_us,
+diff --git a/src/flow_opencv.cpp b/src/flow_opencv.cpp
+index ef74543..c30d868 100644
+--- a/src/flow_opencv.cpp
++++ b/src/flow_opencv.cpp
+@@ -103,7 +103,7 @@ int OpticalFlowOpenCV::calcFlow(uint8_t *img_current, const uint32_t &img_time_u
+ 	cv::Mat frame_gray = cv::Mat(image_height, image_width, CV_8UC1);
+ 	frame_gray.data = (uchar *)img_current;
+ 
+-	trackFeatures(frame_gray, frame_gray, features_current, useless, updateVector, 0);
++	trackFeatures(klt_state, frame_gray, frame_gray, features_current, useless, updateVector, 0);
+ 
+ 	if (set_camera_matrix && set_camera_distortion) {
+ 		features_tmp = features_current;
+diff --git a/src/optical_flow.cpp b/src/optical_flow.cpp
+index 4b499c2..771c5e8 100644
+--- a/src/optical_flow.cpp
++++ b/src/optical_flow.cpp
+@@ -53,8 +53,6 @@ int OpticalFlow::limitRate(int flow_quality, const uint32_t frame_time_us, int *
+ 			   float *flow_x, float *flow_y)
+ {
+ 
+-	static uint32_t time_last_pub = 0;
+-
+ 	if (output_rate <= 0) { //don't limit the rate
+ 		*dt_us = frame_time_us - time_last_pub;
+ 		time_last_pub = frame_time_us;
