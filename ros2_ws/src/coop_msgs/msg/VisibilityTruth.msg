@@ -10,3 +10,9 @@ bool in_fov
 bool in_range
 bool occluded
 float32 range_m
+
+# Imaging-model cameras only (Phase 4; zero for the Phase 1-3 range model).
+# For the camera that sees the entity best.
+uint8 camera                    # index into the detector's camera list
+float32 pixels                  # pixels across the entity's critical dimension
+float32 p_detect                # detection probability this frame

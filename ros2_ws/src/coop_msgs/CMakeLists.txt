@@ -15,6 +15,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   msg/AgentStatus.msg
   msg/DeviceStatus.msg
   msg/AgentGoal.msg
+  msg/GimbalCommand.msg
+  msg/GimbalState.msg
   DEPENDENCIES builtin_interfaces)
 
 ament_export_dependencies(rosidl_default_runtime)
