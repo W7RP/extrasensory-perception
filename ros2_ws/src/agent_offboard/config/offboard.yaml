@@ -1,0 +1,21 @@
+# Defaults for one agent. scripts/lib/scenario.py writes a per-agent file on top
+# of this (px4_namespace, route_nea, speeds) from the scenario YAML.
+/**/offboard:
+  ros__parameters:
+    use_sim_time: true
+    px4_namespace: ""          # "/px4_1", "/px4_2", ... (PX4 instance N namespaces itself px4_N)
+    square_side_m: 5.0         # only used when route_nea is empty
+    altitude_m: 3.0
+    # route_nea: [north, east, altitude above start, ...] relative to the start
+    # point (no entry = fly a square). An empty list here would have no type.
+    laps: 1
+    yaw_mode: hold             # hold the start heading: the camera keeps facing the same way
+    control_rate_hz: 20.0      # PX4 needs > 2 Hz (COM_OF_LOSS_T) to stay in offboard
+    cruise_speed_mps: 1.5
+    vertical_speed_mps: 1.0
+    position_gain: 0.8
+    acceptance_radius_m: 0.4
+    acceptance_speed_mps: 0.4
+    px4_timeout_s: 120.0       # abort if PX4 never provides status + valid local position
+    engage_timeout_s: 30.0
+    shutdown_when_done: true
