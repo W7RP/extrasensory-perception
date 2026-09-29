@@ -1,0 +1,17 @@
+# colcon
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+# external packages fetched by scripts/setup/build_workspace.sh
+ros2_ws/src/external/
+# run outputs (demo logs, rosbags, plots)
+logs/
+*.bag
+rosbag2_*/
+# editors / tooling
+.vscode/
+.idea/
+*.swp
+__pycache__/
+compile_commands.json
+.cache/
