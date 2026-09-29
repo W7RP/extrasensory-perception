@@ -1,0 +1,67 @@
+# Phase 1 scenario: two agents, one building, one entity walking behind it.
+#
+# Single source of truth for everything that depends on where things are:
+# PX4 spawn poses, each agent's route, the ESKF origin each detector uses, the
+# entity's path, and the detector/fusion settings. scripts/lib/scenario.py
+# turns it into per-node parameter files; `scenario.py preview` prints the
+# visibility timeline it produces (kinematic approximation, no physics).
+#
+# Frame: Gazebo world, ENU (x east, y north, z up), metres. Yaw in degrees,
+# ENU convention: 0 = facing east, 90 = facing north.
+
+world: coop_field
+world_file: sim/worlds/coop_field.sdf
+
+entity:
+  model: entity              # Gazebo model name
+  ref_height_m: 0.9          # the point detectors aim at (centre of the body)
+  speed_mps: 0.6
+  # Walked back and forth (ping-pong) along the building's east face, 3 m from it.
+  path: [[4.0, -7.0], [4.0, 7.0]]
+
+agents:
+  # Agent 1 patrols south of the building, camera facing north; it sees round
+  # the building's south end once it is east of about x = -1.
+  - id: 1
+    spawn: [-8.0, -16.0, 0.0, 90.0]     # x, y, z, yaw
+    altitude_m: 4.0                     # below the 6 m roof: the building occludes
+    speed_mps: 1.5
+    route: [[7.0, -16.0], [-9.0, -16.0], [7.0, -16.0], [-9.0, -16.0], [7.0, -16.0],
+            [-8.0, -16.0]]
+  # Agent 2 mirrors it on the north side, facing south, on a slower beat, so
+  # the two drift in and out of phase: neither, one, or both see the entity.
+  # Designed with `scenario.py preview`: ~38 % neither / 37 % one / 26 % both.
+  - id: 2
+    spawn: [-8.0, 16.0, 0.0, -90.0]
+    altitude_m: 4.0
+    speed_mps: 1.0
+    route: [[6.0, 16.0], [-12.0, 16.0], [6.0, 16.0], [-12.0, 16.0], [-8.0, 16.0]]
+
+px4:
+  model: x500_flow           # flow + rangefinder, no GPS: the ESKF's inputs
+
+detector:
+  rate_hz: 10.0
+  pose_source: eskf          # eskf | ground_truth (diagnostic: perfect navigation)
+  camera:
+    hfov_deg: 90.0
+    vfov_deg: 60.0
+    pitch_down_deg: 15.0
+    min_range_m: 0.5
+    max_range_m: 25.0
+  noise:
+    range_sigma_base_m: 0.15
+    range_sigma_per_m: 0.02    # monocular range is the weak axis
+    cross_sigma_base_m: 0.05
+    cross_sigma_per_m: 0.005   # 5 mrad angular error
+    p_miss: 0.1
+
+fusion:
+  associator: nearest_neighbour   # or hungarian
+  process_noise: 0.5              # m^2/s^3: a walking person turning around
+  gate_d2: 16.0
+  confirm_hits: 3
+  coast_after_s: 0.5
+  delete_after_s: 10.0
+  max_position_sigma_m: 8.0      # 1-sigma; 4 m cut tracks ~4 s into an occlusion gap
+  publish_rate_hz: 10.0
