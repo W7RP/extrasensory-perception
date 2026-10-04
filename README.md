@@ -1,4 +1,4 @@
-# coop-perception-sim
+# coop-perception-sim // extrasensory perception
 
 A ground device that can see through walls, because agents in the air see for
 it. Several airborne agents watch a scene, detect entities of interest on
